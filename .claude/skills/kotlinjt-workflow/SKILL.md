@@ -42,6 +42,10 @@ with a stall monitor (§2a). A good brief contains, in order:
   source files and the fixtures that are the behavioral contract>."
 - **The task as design intent** with the load-bearing decisions made: what is preserved vs
   interpreted, what refuses vs carries opaquely, which layer owns it.
+- **The SPEC_COVERAGE.md entries this package flips**, named explicitly. `done` requires a
+  committed test tagged `// spec: Figure N` (or `// spec: §x.y`) named in the Evidence column.
+  At review, diff the ledger against the delivery — an entry flipped without its test, or a
+  delivery whose figures stay unflipped, is a rework.
 - **Fixture files named explicitly** as required regression tests — and where a fixture from a
   real producer (NX, JT2Go) is needed but missing, the brief says to STOP and report rather
   than substitute self-written output.
