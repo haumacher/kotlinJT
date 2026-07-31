@@ -63,8 +63,10 @@ with a stall monitor (§2a). A good brief contains, in order:
 
 ### 2a. Stalled agents
 
-Arm a Monitor on the agent transcript's mtime (10-minute quiet threshold). **Verify before
-acting on any monitor event** — the age reading lags the polling window, and a quiet transcript
+Arm a Monitor on the agent transcript's mtime (10-minute quiet threshold). **Watch the real
+transcript** — `~/.claude/projects/<proj>/<session>/subagents/agent-<id>.jsonl` — not the
+`tasks/<id>.output` stub the Agent tool reports, which stays near-empty until completion and
+fires false stall alarms. **Verify before acting on any monitor event** — the age reading lags the polling window, and a quiet transcript
 with busy gradle daemons is a long test run, not a stall (check CPU + tree changes + mtime
 yourself). On real silence: nudge-resume via SendMessage. If still frozen after a resume, take
 the remainder over yourself; check `git status` and run its tests first — committed work is
