@@ -27,11 +27,12 @@ this skill's references move there.
 4. **Review with a novel probe** — non-negotiable, see §4.
 5. **Gate** (§5), **commit** (§6), close the issue with the fixing commit + a comment naming the
    regression test/fixture.
-6. **Loop, don't ask.** When a package lands, the next package from the milestone queue is
-   dispatched immediately — the milestones in issue #1 are the standing instruction, and
-   "say the word" is asking permission the loop already has. Stop only when the queue is
-   empty, a decision genuinely belongs to the user (scope change, doctrine reversal,
-   destructive action), or a blocker needs input only they can give.
+6. **Loop, don't ask. SPEC_COVERAGE.md is the worklist** (Bernhard, 2026-07-31): when a
+   package lands, the next package is cut from the ledger's remaining `—`/`partial` entries —
+   ordered by the milestones in issue #1 — and dispatched immediately. The session stops only
+   when (a) every ledger entry has an honest final fate (`done`, `opaque`, or `n/a` with its
+   condition), (b) tokens run out, or (c) a decision genuinely belongs to the user (scope
+   change, doctrine reversal, destructive action) or a blocker needs input only they can give.
 7. **Before finishing: `gh issue list -R haumacher/kotlinJT`.** Keep in-flight plans mirrored in
    issues (or DESIGN.md once it exists) so a crashed session loses nothing.
 
