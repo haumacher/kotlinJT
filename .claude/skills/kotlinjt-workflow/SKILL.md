@@ -66,9 +66,11 @@ with a stall monitor (§2a). A good brief contains, in order:
 Arm a Monitor on the agent transcript's mtime (10-minute quiet threshold). **Watch the real
 transcript** — `~/.claude/projects/<proj>/<session>/subagents/agent-<id>.jsonl` — not the
 `tasks/<id>.output` stub the Agent tool reports, which stays near-empty until completion and
-fires false stall alarms. **Verify before acting on any monitor event** — the age reading lags the polling window, and a quiet transcript
-with busy gradle daemons is a long test run, not a stall (check CPU + tree changes + mtime
-yourself). On real silence: nudge-resume via SendMessage. If still frozen after a resume, take
+fires false stall alarms (equivalently: `stat -L` the tasks path — it is a symlink to the real
+transcript, and plain `stat` reads the link's own never-changing mtime, crying wolf in exact
+poll-interval increments). **Verify before acting on any monitor event** — a quiet transcript
+with busy gradle daemons is a long test run, not a stall (check CPU + tree changes + the
+target's mtime yourself). On real silence: nudge-resume via SendMessage. If still frozen after a resume, take
 the remainder over yourself; check `git status` and run its tests first — committed work is
 usually further along than the last message suggests.
 
