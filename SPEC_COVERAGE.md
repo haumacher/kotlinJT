@@ -44,32 +44,36 @@ are tracked at section granularity with behavioral tests.
 
 ## §4 Notational conventions
 
-*Prefilled:* **n/a: notation used to read the spec itself — nothing to implement**
+*Prefilled:* **n/a: notation used to read the spec itself — nothing to implement** — except
+§4.2 Data Types, which is normative and tracked below.
 
+| Section | Read | Write | Evidence (tests) | Notes |
+|---|---|---|---|---|
+| Data Types (p.13) | done | done | PrimitivesTest | both byte orders, hand-built bytes per spec rules |
 
 ## §5 File Format
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| File Format (p.18) | — | — |  |  |
-| File Structure (p.18) | — | — |  |  |
-| File Header (p.18) | — | — |  |  |
-| TOC Segment (p.20) | — | — |  |  |
-| Data Segment (p.21) | — | — |  |  |
-| Data Segments (p.26) | — | — |  |  |
+| File Format (p.18) | done | done | SyntheticFileRoundTripTest, FixtureDiscoveryTest, Layer0ProbeTest | chapter row; Write = byte-faithful re-serialization (authoring writer is milestone 2) |
+| File Structure (p.18) | done | done | SyntheticFileRoundTripTest | region model: segments + TOC + preserved gaps cover the file |
+| File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) |
+| TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) |
+| Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful |
+| Data Segments (p.26) | partial | partial | ElementScanTest | framing scanned; element *bodies* uninterpreted until Layer 1 (#1 milestone 1) |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 10 — JT File Structure (p.18) | — | — |  |  |
-| Fig. 11 — File Header data collection (p.19) | — | — |  |  |
-| Fig. 12 — TOC Segment data collection (p.20) | — | — |  |  |
-| Fig. 13 — TOC Entry data collection (p.21) | — | — |  |  |
-| Fig. 14 — Data Segment data collection (p.22) | — | — |  |  |
-| Fig. 15 — Segment Header data collection (p.22) | — | — |  |  |
-| Fig. 16 — Data collection (p.24) | — | — |  |  |
-| Fig. 17 — Logical Element Header data collection (p.24) | — | — |  |  |
-| Fig. 18 — Element Header data collection (p.24) | — | — |  |  |
-| Fig. 19 — Logical Element Header Compressed data collection (p.25) | — | — |  |  |
+| Fig. 10 — JT File Structure (p.18) | done | done | SyntheticFileRoundTripTest | |
+| Fig. 11 — File Header data collection (p.19) | done | done | FileHeaderTest | v9: I32 TOC offset @85; verified against real 9.5 fixture |
+| Fig. 12 — TOC Segment data collection (p.20) | done | done | TocTest | |
+| Fig. 13 — TOC Entry data collection (p.21) | done | done | TocTest | v9 28-byte / v10 32-byte entry |
+| Fig. 14 — Data Segment data collection (p.22) | done | done | SyntheticFileRoundTripTest | |
+| Fig. 15 — Segment Header data collection (p.22) | done | done | SyntheticFileRoundTripTest, HostileInputTest | id/type/length mismatches → named notes |
+| Fig. 16 — Data collection (p.24) | done | done | ZlibTest, SyntheticFileRoundTripTest | ZLIB fixture-verified; flag≠2 layout spec-derived, unverified against a real file — note fallback in place |
+| Fig. 17 — Logical Element Header data collection (p.24) | done | done | ElementScanTest | |
+| Fig. 18 — Element Header data collection (p.24) | done | done | ElementScanTest | |
+| Fig. 19 — Logical Element Header Compressed data collection (p.25) | done | done | ElementScanTest, FixtureDiscoveryTest | scanned in inflated LSG of the real fixture (67 elements) |
 
 
 ## §6 LSG Segment
@@ -305,7 +309,7 @@ are tracked at section granularity with behavioral tests.
 | Bitlength CODEC (p.186) | — | — |  |  |
 | Arithmetic CODEC (p.188) | — | — |  |  |
 | Deering Normal CODEC (p.193) | — | — |  |  |
-| LZMA compression (p.195) | — | — |  |  |
+| LZMA compression (p.195) | — | n/a: writer emits ZLIB or none | | named refusal UNSUPPORTED_COMPRESSION in place; decoding needed once a real v10 file arrives (deferral table in DESIGN.md) |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
