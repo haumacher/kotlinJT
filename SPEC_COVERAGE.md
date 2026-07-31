@@ -60,7 +60,7 @@ are tracked at section granularity with behavioral tests.
 | File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) |
 | TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) |
 | Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful |
-| Data Segments (p.26) | partial | partial | ElementScanTest | framing scanned; element *bodies* uninterpreted until Layer 1 (#1 milestone 1) |
+| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest | framing scanned everywhere; LSG element bodies decoded (§6, issue #3); shape LOD / meta data / PMI bodies stay opaque until the §7/§11 packages |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -78,85 +78,90 @@ are tracked at section granularity with behavioral tests.
 
 ## §6 LSG Segment
 
+All §6 rows below share the version caveat established in DESIGN.md: v10 layouts per the
+reference, v9 layouts only where fixture-verified; the non-material attribute elements are
+opaque-with-note (`ELEMENT_LAYOUT_UNVERIFIED`) in v9 files. Write = re-serialization of the
+typed model, byte-identical to the decoded stream (authoring writer is milestone 2).
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| LSG Segment (p.28) | — | — |  |  |
-| Graph Elements (p.28) | — | — |  |  |
-| Node Elements (p.29) | — | — |  |  |
-| Attribute Elements (p.49) | — | — |  |  |
-| Property Atom Elements (p.83) | — | — |  |  |
-| Base Property Atom Element (p.83) | — | — |  |  |
-| String Property Atom Element (p.84) | — | — |  |  |
-| Integer Property Atom Element (p.84) | — | — |  |  |
-| Floating Point Property Atom Element (p.85) | — | — |  |  |
-| JT Object Reference Property Atom Element (p.86) | — | — |  |  |
-| Date Property Atom Element (p.86) | — | — |  |  |
-| Late Loaded Property Atom Element (p.88) | — | — |  |  |
-| Vector4f Property Atom Element (p.89) | — | — |  |  |
-| Property Table (p.90) | — | — |  |  |
-| Element Property Table (p.91) | — | — |  |  |
+| LSG Segment (p.28) | done | done | LsgDocumentTest, LsgSyntheticFileTest, FixtureDiscoveryTest | fixture: 66 graph elements + 41 atoms + 40-entry property table, all typed, stream round-trip byte-identical |
+| Graph Elements (p.28) | done | done | LsgNodeElementCodecTest, LsgAttributeElementCodecTest | unknown/undecodable elements → opaque + named note (LsgDocumentTest) |
+| Node Elements (p.29) | done | done | LsgNodeElementCodecTest | v9 deltas 6–9 in DESIGN.md, fixture-verified |
+| Attribute Elements (p.49) | done | done | LsgAttributeElementCodecTest | v10 complete; v9: material only — others opaque-by-policy with note |
+| Property Atom Elements (p.83) | done | done | LsgPropertyCodecTest | both generations |
+| Base Property Atom Element (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | |
+| String Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (28 in the real file) |
+| Integer Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Floating Point Property Atom Element (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | spec-derived, not yet fixture-verified |
+| JT Object Reference Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified; base type 6 (Table 7) |
+| Date Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified |
+| Late Loaded Property Atom Element (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified (12 shape references) |
+| Vector4f Property Atom Element (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | GUID missing from Table A.1 (spec inconsistency, recorded in ObjectTypeIds) |
+| Property Table (p.90) | done | done | LsgDocumentTest, FixtureDiscoveryTest | fixture: 40 element tables, zero leftover bytes |
+| Element Property Table (p.91) | done | done | LsgDocumentTest | |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 20 — LSG Segment data collection (p.28) | — | — |  |  |
-| Fig. 21 — Base Node Element data collection (p.29) | — | — |  |  |
-| Fig. 22 — Base Node Data collection (p.29) | — | — |  |  |
-| Fig. 23 — Partition Node Element data collection (p.31) | — | — |  |  |
-| Fig. 24 — Vertex Count Range data collection (p.32) | — | — |  |  |
-| Fig. 25 — Group Node Element data collection (p.33) | — | — |  |  |
-| Fig. 26 — Group Node Data collection (p.34) | — | — |  |  |
-| Fig. 27 — Instance Node Element data collection (p.35) | — | — |  |  |
-| Fig. 28 — Part Node Element data collection (p.35) | — | — |  |  |
-| Fig. 29 — Meta Data Node Element data collection (p.36) | — | — |  |  |
-| Fig. 30 — Meta Data Node Data collection (p.36) | — | — |  |  |
-| Fig. 31 — LOD Node Element data collection (p.37) | — | — |  |  |
-| Fig. 32 — LOD Node Data collection (p.37) | — | — |  |  |
-| Fig. 33 — Range LOD Node Element data collection (p.38) | — | — |  |  |
-| Fig. 34 — Switch Node Element data collection (p.39) | — | — |  |  |
-| Fig. 35 — Base Shape Node Element data collection (p.40) | — | — |  |  |
-| Fig. 36 — Base Shape Data collection (p.40) | — | — |  |  |
-| Fig. 38 — Vertex Shape Node Element data collection (p.42) | — | — |  |  |
-| Fig. 39 — Vertex Shape Data collection (p.43) | — | — |  |  |
-| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | — | — |  |  |
-| Fig. 41 — Point Set Shape Node Element data collection (p.45) | — | — |  |  |
-| Fig. 42 — Polygon Set Shape Node Element data collection (p.46) | — | — |  |  |
-| Fig. 43 — NULL Shape Node Element data collection (p.46) | — | — |  |  |
-| Fig. 44 — Primitive Set Shape Node Element data collection (p.47) | — | — |  |  |
-| Fig. 45 — Primitive Set Quantization Parameters data collection (p.48) | — | — |  |  |
-| Fig. 46 — Base Attribute Data collection (p.49) | — | — |  |  |
-| Fig. 47 — Material Attribute Element data collection (p.51) | — | — |  |  |
-| Fig. 48 — Texture Image Attribute Element data collection (p.54) | — | — |  |  |
-| Fig. 49 — Texture Vers-1 Data collection (p.55) | — | — |  |  |
-| Fig. 50 — Texture Environment data collection (p.58) | — | — |  |  |
-| Fig. 51 — Texture Coord Generation Parameters data collection (p.61) | — | — |  |  |
-| Fig. 52 — Inline Texture Image Data collection (p.62) | — | — |  |  |
-| Fig. 53 — Image Format Description data collection (p.63) | — | — |  |  |
-| Fig. 54 — Draw Style Attribute Element data collection (p.65) | — | — |  |  |
-| Fig. 55 — Light Set Attribute Element data collection (p.67) | — | — |  |  |
-| Fig. 56 — Infinite Light Attribute Element data collection (p.68) | — | — |  |  |
-| Fig. 57 — Base Light Data collection (p.69) | — | — |  |  |
-| Fig. 58 — Point Light Attribute Element data collection (p.71) | — | — |  |  |
-| Fig. 59 — Spread Angle value with respect to the light cone (p.72) | — | — |  |  |
-| Fig. 60 — Attenuation Coefficients data collection (p.73) | — | — |  |  |
-| Fig. 61 — Linestyle Attribute Element data collection (p.74) | — | — |  |  |
-| Fig. 62 — Pointstyle Attribute Element data collection (p.75) | — | — |  |  |
-| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | — | — |  |  |
-| Fig. 64 — Texture Coordinate Generator Attribute Element data collection (p.78) | — | — |  |  |
-| Fig. 65 — Mapping Plane Element data collection (p.79) | — | — |  |  |
-| Fig. 66 — Mapping Cylinder Element data collection (p.80) | — | — |  |  |
-| Fig. 67 — Mapping Sphere Element data collection (p.81) | — | — |  |  |
-| Fig. 68 — Mapping TriPlanar Element data collection (p.82) | — | — |  |  |
-| Fig. 69 — Base Property Atom Element data collection (p.83) | — | — |  |  |
-| Fig. 70 — Base Property Atom Data collection (p.83) | — | — |  |  |
-| Fig. 71 — String Property Atom Element data collection (p.84) | — | — |  |  |
-| Fig. 72 — Integer Property Atom Element data collection (p.85) | — | — |  |  |
-| Fig. 73 — Floating Point Property Atom Element data collection (p.85) | — | — |  |  |
-| Fig. 74 — JT Object Reference Property Atom Element data collection (p.86) | — | — |  |  |
-| Fig. 75 — Date Property Atom Element data collection (p.87) | — | — |  |  |
-| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | — | — |  |  |
-| Fig. 77 — Vector4f Property Atom Element data collection (p.89) | — | — |  |  |
-| Fig. 78 — Property Table data collection (p.90) | — | — |  |  |
-| Fig. 79 — Element Property Table data collection (p.91) | — | — |  |  |
+| Fig. 20 — LSG Segment data collection (p.28) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | figure's 2nd list box garbled in the PDF; fixture confirms property atoms |
+| Fig. 21 — Base Node Element data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 22 — Base Node Data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | fixture-verified (all 66 graph elements) |
+| Fig. 23 — Partition Node Element data collection (p.31) | done | done | LsgNodeElementCodecTest.partitionNodeElement | fixture-verified incl. flag-bit-0 conditional box |
+| Fig. 24 — Vertex Count Range data collection (p.32) | done | done | LsgNodeElementCodecTest.partitionNodeElement | |
+| Fig. 25 — Group Node Element data collection (p.33) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
+| Fig. 26 — Group Node Data collection (p.34) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
+| Fig. 27 — Instance Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.instanceNodeElement | fixture-verified |
+| Fig. 28 — Part Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.partNodeElement | fixture-verified |
+| Fig. 29 — Meta Data Node Element data collection (p.36) | done | done | LsgNodeElementCodecTest.metaDataNodeElement | fixture-verified |
+| Fig. 30 — Meta Data Node Data collection (p.36) | done | done | LsgNodeElementCodecTest.metaDataNodeElement | fixture-verified |
+| Fig. 31 — LOD Node Element data collection (p.37) | done | done | LsgNodeElementCodecTest.lodNodeElement | spec-derived; v9 reserved fields fixture-verified via Range LOD |
+| Fig. 32 — LOD Node Data collection (p.37) | done | done | LsgNodeElementCodecTest.lodNodeElement | v9 delta 7 in DESIGN.md |
+| Fig. 33 — Range LOD Node Element data collection (p.38) | done | done | LsgNodeElementCodecTest.rangeLodNodeElement | fixture-verified (12 in the real file) |
+| Fig. 34 — Switch Node Element data collection (p.39) | done | done | LsgNodeElementCodecTest.switchNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 35 — Base Shape Node Element data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 36 — Base Shape Data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | fixture-verified via tri-strip nodes; v9 delta 8 |
+| Fig. 38 — Vertex Shape Node Element data collection (p.42) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 39 — Vertex Shape Data collection (p.43) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement, .triStripSetShapeNodeElement | fixture-verified by consumption; v9 delta 9 and its evidence limit |
+| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | done | done | LsgNodeElementCodecTest.polylineSetShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 41 — Point Set Shape Node Element data collection (p.45) | done | done | LsgNodeElementCodecTest.pointSetShapeNodeElement | spec-derived; the version==1 conditional binding treated as v10-only |
+| Fig. 42 — Polygon Set Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.polygonSetShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 43 — NULL Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.nullShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 44 — Primitive Set Shape Node Element data collection (p.47) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 45 — Primitive Set Quantization Parameters data collection (p.48) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 46 — Base Attribute Data collection (p.49) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9 | v9 delta 10: no field-final flags, fixture-verified |
+| Fig. 47 — Material Attribute Element data collection (p.51) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9 | fixture-verified; v9 delta 11 |
+| Fig. 48 — Texture Image Attribute Element data collection (p.54) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 49 — Texture Vers-1 Data collection (p.55) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal, .textureImageAttributeElementInline | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 50 — Texture Environment data collection (p.58) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 51 — Texture Coord Generation Parameters data collection (p.61) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 52 — Inline Texture Image Data collection (p.62) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementInline | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 53 — Image Format Description data collection (p.63) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementInline | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 54 — Draw Style Attribute Element data collection (p.65) | done | done | LsgAttributeElementCodecTest.drawStyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 55 — Light Set Attribute Element data collection (p.67) | done | done | LsgAttributeElementCodecTest.lightSetAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 56 — Infinite Light Attribute Element data collection (p.68) | done | done | LsgAttributeElementCodecTest.infiniteLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 57 — Base Light Data collection (p.69) | done | done | LsgAttributeElementCodecTest.infiniteLightAttributeElement, .pointLightAttributeElement | figure garbled in the PDF (stray header box); read as base attribute data first — recorded in DESIGN.md |
+| Fig. 58 — Point Light Attribute Element data collection (p.71) | done | done | LsgAttributeElementCodecTest.pointLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 59 — Spread Angle value with respect to the light cone (p.72) | n/a | n/a | | illustrative drawing, no byte layout |
+| Fig. 60 — Attenuation Coefficients data collection (p.73) | done | done | LsgAttributeElementCodecTest.pointLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 61 — Linestyle Attribute Element data collection (p.74) | done | done | LsgAttributeElementCodecTest.linestyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 62 — Pointstyle Attribute Element data collection (p.75) | done | done | LsgAttributeElementCodecTest.pointstyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | done | done | LsgAttributeElementCodecTest.geometricTransformAttributeElement | sparse mask-driven storage, full matrix in the model |
+| Fig. 64 — Texture Coordinate Generator Attribute Element data collection (p.78) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | nested mapping-surface element; alien surface stays lossless (LsgDocumentTest) |
+| Fig. 65 — Mapping Plane Element data collection (p.79) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 66 — Mapping Cylinder Element data collection (p.80) | done | done | LsgAttributeElementCodecTest.mappingCylinderElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 67 — Mapping Sphere Element data collection (p.81) | done | done | LsgAttributeElementCodecTest.mappingSphereElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 68 — Mapping TriPlanar Element data collection (p.82) | done | done | LsgAttributeElementCodecTest.mappingTriPlanarElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 69 — Base Property Atom Element data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 70 — Base Property Atom Data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | fixture-verified (all 41 atoms) |
+| Fig. 71 — String Property Atom Element data collection (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified |
+| Fig. 72 — Integer Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 73 — Floating Point Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 74 — JT Object Reference Property Atom Element data collection (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 75 — Date Property Atom Element data collection (p.87) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified |
+| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified |
+| Fig. 77 — Vector4f Property Atom Element data collection (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 78 — Property Table data collection (p.90) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified; also identifies the shape segments' 6-byte tail (DESIGN.md) |
+| Fig. 79 — Element Property Table data collection (p.91) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified |
 
 
 ## §7 Shape LOD Segment
@@ -379,7 +384,7 @@ are tracked at section granularity with behavioral tests.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Object Type Identifier table (GUID → element type) (p.211) | — | — |  |  |
+| Object Type Identifier table (GUID → element type) (p.211) | done | done | LsgPropertyCodecTest.annexAResolvesLsgTypes, .annexACoversAllLsgCodecs | full table in ObjectTypeIds (all segment kinds); LSG codec dispatch + inventory naming; Vector4f atom GUID added from §6.2 (missing from Table A.1) |
 
 
 ## Annex B — Coding Algorithms: An Implementation

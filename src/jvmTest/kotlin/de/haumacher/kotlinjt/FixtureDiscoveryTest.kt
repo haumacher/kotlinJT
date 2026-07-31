@@ -1,7 +1,14 @@
 package de.haumacher.kotlinjt
 
+import de.haumacher.kotlinjt.lsg.LsgDocument
+import de.haumacher.kotlinjt.lsg.OpaqueLsgElement
+import de.haumacher.kotlinjt.lsg.StringPropertyAtomElement
+import de.haumacher.kotlinjt.lsg.decodeLsg
+import de.haumacher.kotlinjt.lsg.encodeLsgSegmentPayload
+import de.haumacher.kotlinjt.lsg.lsgSegment
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DynamicContainer.dynamicContainer
 import org.junit.jupiter.api.DynamicNode
@@ -35,20 +42,22 @@ class FixtureDiscoveryTest {
 
     @TestFactory
     fun localFixtures(): List<DynamicNode> {
-        val fixturesDir = File(repoRoot(), "fixtures-local")
+        // Both fixture tiers run the same battery: the committed public spine under
+        // `fixtures/` and the IP-encumbered local suite under `fixtures-local/`.
+        val directories = listOf(File(repoRoot(), "fixtures"), File(repoRoot(), "fixtures-local"))
         val fixtures =
-            fixturesDir.listFiles { f -> f.isFile && f.name.endsWith(".jt") }
-                ?.sortedBy { it.name }
-                .orEmpty()
+            directories.flatMap { dir ->
+                dir.listFiles { f -> f.isFile && f.name.endsWith(".jt") }?.sortedBy { it.name }.orEmpty()
+            }
         if (fixtures.isEmpty()) {
             return listOf(
-                dynamicTest("no *.jt fixtures under ${fixturesDir.path} — real-file suite SKIPPED (0 fixtures)") {
-                    println("FIXTURE SUITE SKIPPED: 0 local fixtures in ${fixturesDir.path}")
-                    assumeTrue(false, "no local fixtures present; the real-file acceptance suite did not run")
+                dynamicTest("no *.jt fixtures under ${directories.joinToString { it.path }} — real-file suite SKIPPED (0 fixtures)") {
+                    println("FIXTURE SUITE SKIPPED: 0 fixtures in ${directories.joinToString { it.path }}")
+                    assumeTrue(false, "no fixtures present; the real-file acceptance suite did not run")
                 },
             )
         }
-        println("FIXTURE SUITE: ${fixtures.size} local fixture(s) discovered in ${fixturesDir.path}")
+        println("FIXTURE SUITE: ${fixtures.size} fixture(s) discovered in ${directories.joinToString { it.path }}")
         return fixtures.map { fixture -> fixtureBattery(fixture) }
     }
 
@@ -92,6 +101,63 @@ class FixtureDiscoveryTest {
                 dynamicTest("re-serializes byte-identically") {
                     val file = JtFile.parse(bytes)
                     assertArrayEquals(bytes, file.serialize(), "Layer 0 losslessness violated")
+                },
+                dynamicTest("LSG decodes typed-or-noted and round-trips byte-identically") {
+                    val file = JtFile.parse(bytes)
+                    val elementData = file.lsgSegment()?.elementData
+                    assumeTrue(elementData != null, "no decodable LSG segment in this fixture")
+                    val result = LsgDocument.decode(elementData!!, file.header.version, file.header.byteOrder)
+                    // Zero unnamed refusals: every opaque element is covered by a note.
+                    val opaque = result.document.allElements.count { it is OpaqueLsgElement }
+                    assertTrue(
+                        opaque <= result.notes.size,
+                        "$opaque opaque elements but only ${result.notes.size} notes — a silent refusal",
+                    )
+                    assertArrayEquals(
+                        elementData.toByteArray(),
+                        result.document.encode(file.header.byteOrder).toByteArray(),
+                        "Layer 1 losslessness violated: encode(decode(elementStream)) drifted",
+                    )
+                },
+                dynamicTest("a model-level LSG mutation yields a legal, model-equal file") {
+                    val file = JtFile.parse(bytes)
+                    val segment = file.lsgSegment()
+                    val decoded = file.decodeLsg()
+                    assumeTrue(segment != null && decoded != null, "no decodable LSG segment in this fixture")
+                    val document = decoded!!.document
+                    val atomIndex = document.propertyAtoms.indexOfFirst { it is StringPropertyAtomElement }
+                    assumeTrue(atomIndex >= 0, "no string property atom to mutate")
+                    val atom = document.propertyAtoms[atomIndex] as StringPropertyAtomElement
+                    val mutated =
+                        document.copy(
+                            propertyAtoms =
+                                document.propertyAtoms.toMutableList()
+                                    .also { it[atomIndex] = atom.copy(value = atom.value + "~probe") },
+                        )
+                    val payload =
+                        encodeLsgSegmentPayload(
+                            mutated.encode(file.header.byteOrder),
+                            file.header.version,
+                            file.header.byteOrder,
+                        )
+                    val newFile = file.withSegmentPayload(segment!!.tocEntry.segmentId, payload)
+                    assertEquals(
+                        file.notes.map { it.name },
+                        newFile.notes.map { it.name },
+                        "the mutated file must be as legal as the original",
+                    )
+                    val reDecoded = newFile.decodeLsg()
+                    assertEquals(mutated, reDecoded?.document, "model equality after mutation + re-layout")
+                    assertEquals(
+                        decoded.notes.map { it.name },
+                        reDecoded?.notes.orEmpty().map { it.name },
+                    )
+                    // Every other segment re-emits its raw payload untouched.
+                    for ((before, after) in file.segments.zip(newFile.segments)) {
+                        if (before.tocEntry.segmentId != segment.tocEntry.segmentId) {
+                            assertEquals(before.payload, after.payload, "unmodified segment payload drifted")
+                        }
+                    }
                 },
             ),
         )

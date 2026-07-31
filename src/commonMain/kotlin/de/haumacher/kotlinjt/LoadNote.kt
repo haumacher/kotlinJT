@@ -152,4 +152,65 @@ sealed class LoadNote {
         override val name: String get() = "ELEMENT_STREAM_UNRECOGNIZED"
         override val message: String get() = "segment $segmentId payload does not start with a valid element frame: $detail"
     }
+
+    /** An element with an Object Type ID outside Annex A; carried opaquely, byte-faithful. */
+    data class UnknownElementType(
+        val objectTypeId: Guid,
+        val location: String,
+    ) : LoadNote() {
+        override val name: String get() = "UNKNOWN_ELEMENT_TYPE"
+        override val message: String get() = "$location: element type $objectTypeId is not in the Annex A table; carried opaquely"
+    }
+
+    /**
+     * A known element type whose wire layout for the file's format generation is not
+     * established (the v10 reference documents only v10; v9 layouts are used only where
+     * verified against real files — DESIGN.md). Carried opaquely rather than guessed.
+     */
+    data class ElementLayoutUnverified(
+        val objectTypeId: Guid,
+        val typeName: String,
+        val generation: String,
+        val location: String,
+    ) : LoadNote() {
+        override val name: String get() = "ELEMENT_LAYOUT_UNVERIFIED"
+        override val message: String
+            get() = "$location: $typeName has no established $generation wire layout; carried opaquely"
+    }
+
+    /** A known element type whose body did not decode; carried opaquely, byte-faithful. */
+    data class ElementDecodeFailed(
+        val objectTypeId: Guid,
+        val typeName: String,
+        val location: String,
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "ELEMENT_DECODE_FAILED"
+        override val message: String get() = "$location: $typeName did not decode ($detail); carried opaquely"
+    }
+
+    /** An LSG element stream that does not have the Figure 20 structure. */
+    data class LsgStructureUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "LSG_STRUCTURE_UNRECOGNIZED"
+        override val message: String get() = "LSG element stream deviates from the Figure 20 structure: $detail"
+    }
+
+    /** An LSG stream that ends after its element lists without a Property Table. */
+    data class PropertyTableMissing(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "PROPERTY_TABLE_MISSING"
+        override val message: String get() = "LSG stream carries no Property Table: $detail"
+    }
+
+    /** LSG trailing bytes that do not parse as a Property Table; preserved verbatim. */
+    data class PropertyTableUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "PROPERTY_TABLE_UNRECOGNIZED"
+        override val message: String
+            get() = "LSG bytes after the element lists do not parse as a Property Table: $detail; preserved verbatim"
+    }
 }

@@ -1,5 +1,9 @@
 package de.haumacher.kotlinjt
 
+import de.haumacher.kotlinjt.lsg.ObjectTypeIds
+import de.haumacher.kotlinjt.lsg.OpaqueLsgElement
+import de.haumacher.kotlinjt.lsg.decodeLsg
+
 /**
  * The forensic layer's first answer: every segment with GUID, type, offset, length and
  * compression, human-readable. This is what bug triage runs first on every reported file.
@@ -116,7 +120,39 @@ fun JtFile.inventoryJson(hash: ((ByteArray) -> String)? = null): String {
         if (i < segmentRegions.size - 1) sb.append(",")
         sb.append('\n')
     }
-    sb.append("  ]\n")
+    sb.append("  ],\n")
+    appendLsgJson(sb)
     sb.append("}\n")
     return sb.toString()
+}
+
+/**
+ * The Layer 1 view of the LSG segment as a JSON block: element counts, the per-type
+ * histogram (Annex A names), the decode note names, and the property table size. `null`
+ * when the file has no decodable LSG segment.
+ */
+private fun JtFile.appendLsgJson(sb: StringBuilder) {
+    val result = decodeLsg()
+    if (result == null) {
+        sb.append("  \"lsg\": null\n")
+        return
+    }
+    val document = result.document
+    val histogram =
+        document.allElements
+            .groupingBy { ObjectTypeIds.nameOf(it.objectTypeId) ?: it.objectTypeId.toString() }
+            .eachCount()
+            .toList()
+            .sortedBy { it.first }
+    sb.append("  \"lsg\": {\n")
+    sb.append("    \"noteNames\": [").append(result.notes.joinToString(", ") { "\"${it.name}\"" }).append("],\n")
+    sb.append("    \"graphElements\": ").append(document.graphElements.size).append(",\n")
+    sb.append("    \"propertyAtoms\": ").append(document.propertyAtoms.size).append(",\n")
+    sb.append("    \"opaqueElements\": ").append(document.allElements.count { it is OpaqueLsgElement }).append(",\n")
+    sb.append("    \"propertyTableEntries\": ").append(document.propertyTable?.tables?.size ?: -1).append(",\n")
+    sb.append("    \"trailingBytes\": ").append(document.trailing.size).append(",\n")
+    sb.append("    \"elementTypes\": {")
+    sb.append(histogram.joinToString(", ") { (name, count) -> "\"$name\": $count" })
+    sb.append("}\n")
+    sb.append("  }\n")
 }

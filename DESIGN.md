@@ -145,29 +145,129 @@ wide), `JtVersion.wideOffsets`.
    elements + end marker + 42 property atoms + end marker + 694 bytes of non-element-framed
    tail (the property table — Layer 1 will interpret it).
 
-### Recorded observations, not yet interpreted
+### Recorded observations
 
-- **Six trailing bytes `01 00 00 00 00 00` after the end-of-elements marker in every one of
-  the fixture's 12 shape segments.** Not derivable from the v10 text; possibly a v9 shape
-  segment field. Carried verbatim by Layer 0 (inside the raw payload; visible in the
-  inventory as `trailing 6 B`). To be interpreted when Layer 1 reads v9 shape LODs.
+- **Six trailing bytes `01 00 00 00 00 00` after the end-of-elements marker in shape
+  segments — identified as an empty Property Table** (Figure 78: I16 version = 1, I32
+  Element Property Table Count = 0), the same structure the LSG segment carries after its
+  element lists. Evidence: all 12 shape segments of the 9.5 fixture (NetAllied) *and* all 39
+  shape segments of the committed NIST fixture (Siemens NX, JT 10.5) end in exactly these six
+  bytes — two producers, two format generations. Still carried verbatim by Layer 0 (shape
+  segment *interpretation* is the §7 package's job; the identification is recorded so that
+  package starts from fact, not mystery).
 - **Compression fields with flag ∉ {2,3}** (compression off): the fields are still read and
   the remaining `dataLength − 1` bytes treated as plain element data. Spec-derived
   (Figure 19 shows the fields unconditionally on the first element), fixture-unverified —
   the fixture always compresses. If a real file contradicts this, the framing falls back to
   a `COMPRESSION_HEADER_INCONSISTENT` note with raw bytes preserved, so nothing can be lost
   meanwhile.
-- The v9.5 element header may or may not carry the v10 `I32 Object ID` after the base-type
-  byte; Layer 0 does not parse past the base type, so nothing depends on it yet. Decide when
-  Layer 1 parses element bodies.
+- ~~The v9.5 element header may or may not carry the v10 `I32 Object ID`.~~ **Resolved by
+  Layer 1**: it does — see LSG delta 6 below.
+
+## Layer 1: the LSG document model (issue #3)
+
+**Model ↔ bytes mapping.** Every §6 element type is an immutable data class in
+`de.haumacher.kotlinjt.lsg`, composed exactly as the spec composes its data collections
+(`GroupNodeData` contains `BaseNodeData`, `VertexShapeData` contains `BaseShapeData`, …).
+Decoding is codec-per-type (`LsgElementCodecs`, keyed by the Annex A GUID in
+`ObjectTypeIds` — one table serving both the codecs and the inventory) and **strict**: each
+element decodes from exactly its framed body on a bounded sub-reader; underrun, overrun, an
+unexpected Object Base Type byte (Table 7), or any structurally impossible count refuses the
+typed decode. A refusal never throws through the API and never loses bytes — the element is
+carried as `OpaqueLsgElement` (type GUID + verbatim body) with a named note:
+`UNKNOWN_ELEMENT_TYPE` (GUID outside Annex A), `ELEMENT_LAYOUT_UNVERIFIED` (type known, wire
+layout for this generation not established), or `ELEMENT_DECODE_FAILED` (body did not parse).
+There is deliberately **no half-decoded element**: partially understood bytes would make
+re-serialization a reconstruction instead of a projection.
+
+**Document structure** (`LsgDocument`, Figure 20): graph element list, property atom list
+(each closed by the end-of-elements marker), typed `PropertyTable`. Streams that deviate get
+named notes (`LSG_STRUCTURE_UNRECOGNIZED`, `PROPERTY_TABLE_MISSING`,
+`PROPERTY_TABLE_UNRECOGNIZED`) and their unconsumed remainder preserved verbatim in
+`LsgDocument.trailing`. Note: Figure 20's second-list box is garbled in the reference PDF
+(it reads "Texture Coordinate Generator Attribute Elements"); the fixture confirms the list
+holds the Property Atom Elements.
+
+**The losslessness seam.** Layer 1's guarantee is at the *element-stream* level:
+`LsgDocument.decode` → `encode` is byte-identical to the inflated element data — asserted for
+every fixture and every hostile-path test. At the *file* level, unmodified segments re-emit
+their raw (compressed) payload through Layer 0; re-deflation is never used to prove identity.
+A **modified** segment goes through `JtFile.withSegmentPayload` (re-layout: region order
+kept, offsets/TOC/header recomputed, result re-parsed) and produces a legal file asserted by
+**model equality**, not byte equality — the compressed bytes of a re-deflated stream are not
+canonical, models are. `encodeLsgSegmentPayload` writes the segment-wide fields for a fresh
+LSG payload: v9 → ZLIB (flag 2, algorithm 2, level 6); v10 → stored (algorithm 1), the
+simplest legal encoding until an LZMA *encoder* has a real v10 fixture to prove itself
+against (the committed NIST 10.5 fixture gives the *decoder* its condition — see deferrals).
+
+**v9 policy.** Types whose v9 layout is fixture-verified or follows from fixture-verified
+sub-collections plus the version-width rule decode typed in v9: the whole node family
+(including all shape nodes — their tails after verified collections are fixed-size, so the
+strict length check turns any wrong derivation into a named opaque fallback, not a misread),
+the property atom family, the property table, and the Material attribute. All *other*
+attribute types (draw style, lights, line/point style, geometric transform, textures,
+mappings) are **opaque-by-policy in v9** with `ELEMENT_LAYOUT_UNVERIFIED` — the LOD/shape/
+material deltas below prove that v9 layouts do *not* follow mechanically from v10, so
+guessing variable-length layouts would risk silent misreads. Their time comes with the first
+v9 fixture that carries them.
+
+**Known spec ambiguities recorded**: Figure 57 (Base Light Data) shows a stray element-header
+box; read as Base Attribute Data first, per the attribute-element convention — spec-derived,
+not fixture-verified. The Vector4f Property Atom's GUID appears in §6.2 but is missing from
+Table A.1; `ObjectTypeIds` carries it with a comment. Float payloads are re-encoded from
+`Float`/`Double` fields; exotic NaN bit patterns are not guaranteed bit-stable on Kotlin/JS
+(`Float.fromBits` normalization) — no real file has shown one; if one does, the affected
+field moves to raw-bits storage.
+
+## v9 vs v10 LSG element deltas (established, with byte evidence from the fixture)
+
+Continuing the numbering of the structural deltas above; all verified against the 9.5
+fixture's inflated LSG stream (8 663 bytes, 66 graph elements + 41 property atoms + property
+table) and pinned by the v9 halves of the per-figure codec tests.
+
+6. **Version Number fields are I16 in v9, one byte (U8/I8) in v10** — pervasive, verified
+   across the node family (`01 00` at every version position of all 66 graph elements), the
+   attribute family (material), the property atom family (all 41 atoms), and both generations
+   share the I16 property-table version. The element header carries the I32 Object ID after
+   the base-type byte in **both** generations (v10 Figure 18; v9 verified: every element's
+   first body field parses as its object id, and the property table references exactly those
+   ids).
+7. **LOD Node Data: v9 carries a reserved VecF32 + I32 that v10 dropped.** Evidence: the
+   fixture's 12 Range LOD nodes parse to exact length only with `2+4+4` reserved bytes
+   between the group data and the range-LOD version; the two `01 00` version markers pin the
+   field positions (offsets 0 and 10 of the post-group bytes).
+8. **Base Shape Data: v9 stores a reserved BBoxF32 before the untransformed box.** Evidence:
+   all 12 tri-strip shape nodes repeat the identical 24-byte box twice; v10 Figure 36 has one
+   box. (The writer emits the untransformed box for the reserved field when a model has none.)
+9. **Vertex Shape Data: v9 = I16 version, U64 vertex bindings, Quantization Parameters
+   (4 × U8: bits per vertex / normal bits factor / bits per texture coord / bits per colour),
+   and for version ≥ 2 a second U64 binding field.** Byte-consumption verified: the fixture's
+   shape nodes carry version 2 and exactly 22 post-shape bytes. Evidence limit recorded
+   honestly: those 22 bytes are all zero, so alternative field groupings of the same width
+   would also fit; the chosen layout follows the v9-generation lineage of the v10 U64 field.
+   A contradicting file falls back to opaque-with-note via the strict length check.
+10. **Base Attribute Data: v9 has no Field Final Flags** (I16 version, U8 state flags, U32
+    field inhibit flags). Evidence: both material elements parse to exact length only without
+    the v10 U32; with it, the RGBA block would misalign by four bytes.
+11. **Material Attribute: v9 has no bumpiness; reflectivity exists from local version 2 on.**
+    Evidence: both material elements are version 2 with exactly 18 F32 payload values =
+    4 RGBA + shininess + reflectivity (v10 Figure 47 has 19 with bumpiness). Data-flag bits
+    0x000F (the v10 inhibit table hints at "Common RGB Value" compact colour storage in older
+    generations) refuse the v9 typed decode — layout not established, never guessed.
+12. **The Property Table layout is shared by both generations** (I16 version even in v10,
+    Figure 78). Evidence: the fixture's 694-byte tail parses to exactly 40 element property
+    tables with zero leftover; all key/value object ids resolve to decoded property atoms.
 
 ## Fixture conventions (from the amendment on issue #1)
 
-- JVM-only `FixtureDiscoveryTest` auto-discovers `fixtures-local/*.jt` (repo root found by
-  walking up to `settings.gradle.kts`/`.git`). Battery per file: parse with exactly the
-  sidecar's note names (empty for a healthy file); inventory JSON — including per-payload
-  SHA-256 — equal to the sidecar `<name>.expected.json` (created on first run for human
-  review, asserted thereafter); byte-identical re-serialization.
+- JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
+  public spine under `fixtures/` (sidecars committed with them) and the IP-encumbered
+  `fixtures-local/` (repo root found by walking up to `settings.gradle.kts`/`.git`). Battery
+  per file: parse with exactly the sidecar's note names (empty for a healthy file); inventory
+  JSON — including per-payload SHA-256 and the LSG element histogram — equal to the sidecar
+  `<name>.expected.json` (created on first run for human review, asserted thereafter);
+  byte-identical re-serialization; LSG element-stream round-trip; the model-level mutation
+  probe (skipping visibly where the LSG is not decodable, e.g. the NIST fixture's LZMA).
 - No fixtures ⇒ one visibly **SKIPPED** test whose name carries the count. Verified.
 - Committed code never names a fixture file (customer part numbers). Sidecars live next to
   the fixtures, equally gitignored.
@@ -179,11 +279,13 @@ wide), `JtVersion.wideOffsets`.
 
 | What | Its time comes when |
 |---|---|
-| LZMA segment codec (v10, §12.2.5) | first v10 fixture using it |
+| LZMA segment codec (v10, §12.2.5) | **condition met**: the committed NIST 10.5 fixture uses it (59 refused segments incl. the LSG) — next decoding package |
 | Int32CDP / geometry codecs (§12) | Layer 1 shape reading |
-| Element body parsing (Object ID, object data) | Layer 1 |
-| LSG property table interpretation | Layer 1 |
+| Element body parsing for non-LSG segments (shape LOD, meta data, PMI) | the §7/§11 packages (LSG done, issue #3) |
+| v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |
+| Property-table *semantics* (units, key naming conventions, §13.8) | Layer 2 scene façade (raw carrying is done) |
+| Shape-segment trailing empty property table interpretation | §7 shape LOD package (identified, see observations) |
 | Streaming input (not whole-file `ByteArray`) | first file too large to buffer comfortably |
 | Browser JS target | first browser consumer (ConstructIt seam) |
-| Re-layout on mutation (offset recomputation) | Layer 1 write path |
+| General re-layout on arbitrary mutation | Layer 1 authoring writer (single-segment payload replacement exists: `withSegmentPayload`) |
 | kotlinx-io ≥ 0.4 / Kotlin 2.x upgrade | any feature blocked on the old toolchain |
