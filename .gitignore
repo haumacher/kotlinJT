@@ -1,0 +1,19 @@
+# Gradle / build output
+.gradle/
+build/
+**/build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Real-producer JT fixtures: IP-encumbered, never committed.
+# The test suite auto-discovers *.jt files here and skips visibly when absent.
+fixtures-local/*
+!fixtures-local/README.md
+
+# Kotlin/JS
+.kotlin/
+node_modules/
+kotlin-js-store/

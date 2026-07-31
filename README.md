@@ -36,8 +36,13 @@ produce JT: one neutral scene handoff, many format consumers.
 ## Design principles
 
 - **Round-trip tests are the acceptance spine.** Read a real file → write → read → models equal.
-  The permanent fixtures are files that NX / JT2Go actually produced — a library that only
-  round-trips its own output proves nothing.
+  Real-producer files (NX, JT2Go, supplier tool chains) are the acceptance authority — but they
+  are typically IP-encumbered, so they live in a gitignored `fixtures-local/` directory that the
+  test suite auto-discovers (skipping *visibly* when empty). The repo commits **synthetic
+  goldens** written by the library itself, frozen only after external validation (real-file
+  suite green, JT2Go opens the writer's output) — their job is regression pinning for CI, not
+  conformance proof: a library that only round-trips its own output proves nothing. See the
+  amendment in [issue #1](https://github.com/haumacher/kotlinJT/issues/1).
 - **Refusals speak.** A file with segments the library cannot decode loads with *named* notes —
   geometry is never silently dropped.
 - **Write one version, read broadly.** The writer targets classic JT v10 (per the withdrawn but
