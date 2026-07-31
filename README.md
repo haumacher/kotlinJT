@@ -1,9 +1,20 @@
 # kotlinJT
 
 A **Kotlin Multiplatform library for reading and writing JT files** (Jupiter Tessellation,
-[ISO 14306](https://www.iso.org/standard/62770.html)) — Siemens' lightweight 3D representation
-format, the de-facto visualization and DMU exchange format of automotive and aerospace PLM
-(NX, Teamcenter, JT2Go, supplier data exchange).
+the ISO 14306 series) — Siemens' lightweight 3D representation format, the de-facto
+visualization and DMU exchange format of automotive and aerospace PLM (NX, Teamcenter, JT2Go,
+supplier data exchange).
+
+**Spec status** (checked 2026-07): the classic single-document spec
+[ISO 14306:2017](https://www.iso.org/standard/62770.html) (JT v10) is *withdrawn* — not because
+the format died, but because ISO restructured JT into a multi-part series:
+[Part 1 *Overview*](https://www.iso.org/standard/86063.html) (2024),
+[Part 2 *Vocabulary*](https://www.iso.org/standard/87427.html) (2024),
+[Part 3 *Version 2*](https://www.iso.org/standard/89233.html) (2025) and
+[Part 4 *Version 3*](https://www.iso.org/standard/86064.html) (2026) — the last two being
+new-generation formats. The withdrawn 2017 text remains the authoritative description of what
+the installed base actually writes today, which is why it is this library's primary target;
+JT Version 2/3 are named future reading targets.
 
 There is no mature open implementation of JT on the JVM, let alone one that also runs in the
 browser. This library aims to be that implementation: pure Kotlin in `commonMain`, with
@@ -29,9 +40,10 @@ produce JT: one neutral scene handoff, many format consumers.
   round-trips its own output proves nothing.
 - **Refusals speak.** A file with segments the library cannot decode loads with *named* notes —
   geometry is never silently dropped.
-- **Write one version, read broadly.** The writer targets one spec version (JT v10 per
-  ISO 14306:2017) and chooses simple encodings; the reader must handle what real producers emit,
-  including the advanced-compressed meshes NX writes.
+- **Write one version, read broadly.** The writer targets classic JT v10 (per the withdrawn but
+  installed-base-authoritative ISO 14306:2017) and chooses simple encodings; the reader must
+  handle what real producers emit — v8/v9/v10 including the advanced-compressed meshes NX
+  writes — with JT Version 2/3 (ISO 14306-3/-4) as named future reading targets.
 - **B-rep (JT B-rep / XT) is preserved opaquely, never interpreted.** Parasolid's representation
   is its own world; this library's honesty is the tessellation, the structure tree, the
   properties and the PMI.
