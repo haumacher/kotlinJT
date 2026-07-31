@@ -27,7 +27,12 @@ this skill's references move there.
 4. **Review with a novel probe** — non-negotiable, see §4.
 5. **Gate** (§5), **commit** (§6), close the issue with the fixing commit + a comment naming the
    regression test/fixture.
-6. **Before finishing: `gh issue list -R haumacher/kotlinJT`.** Keep in-flight plans mirrored in
+6. **Loop, don't ask.** When a package lands, the next package from the milestone queue is
+   dispatched immediately — the milestones in issue #1 are the standing instruction, and
+   "say the word" is asking permission the loop already has. Stop only when the queue is
+   empty, a decision genuinely belongs to the user (scope change, doctrine reversal,
+   destructive action), or a blocker needs input only they can give.
+7. **Before finishing: `gh issue list -R haumacher/kotlinJT`.** Keep in-flight plans mirrored in
    issues (or DESIGN.md once it exists) so a crashed session loses nothing.
 
 Track packages with TaskCreate/TaskUpdate; statuses honest.
