@@ -360,11 +360,30 @@ sealed class LoadNote {
             get() = "attribute accumulation flags beyond the modelled semantics: $detail; the scene applies plain accumulation"
     }
 
-    /** One merged mesh drew from shapes with differing materials; one of them was chosen. */
+    /** One scene node drew from shapes with differing materials; one of them was chosen. */
     data class SceneMaterialAmbiguous(
         val detail: String,
     ) : LoadNote() {
         override val name: String get() = "SCENE_MATERIAL_AMBIGUOUS"
         override val message: String get() = "conflicting materials merged into one scene node: $detail"
+    }
+
+    /**
+     * A LOD node whose alternative representations hold different numbers of shapes. The scene
+     * pairs the shapes of the tiers by position (one scene node per shape, its meshes being
+     * that shape across the tiers), and nothing states which shape of a coarse tier stands for
+     * which shape of the fine one — so where the counts differ, a node's mesh list can skip a
+     * tier, and picking "LOD *i*" uniformly across the part may mix tiers.
+     */
+    data class SceneLodTiersUnaligned(
+        val nodeObjectId: Int,
+        val shapesPerTier: List<Int>,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_LOD_TIERS_UNALIGNED"
+        override val message: String
+            get() =
+                "the LOD tiers of node #$nodeObjectId hold different numbers of shapes " +
+                    "($shapesPerTier); the scene pairs them by position, so one node's mesh list " +
+                    "may skip a tier"
     }
 }

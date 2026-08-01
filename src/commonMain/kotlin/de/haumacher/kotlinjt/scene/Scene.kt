@@ -28,6 +28,13 @@ data class Scene(
  * is the material in effect for this node's own meshes; `null` means the parent's material is
  * inherited (materials replace down the tree, nearest non-null on the path wins).
  *
+ * **One node per body, one list entry per LOD.** A node's geometry is a *single* body — one
+ * shape of the source model — and [meshes] / [polylines] are that one body at successively
+ * coarser levels of detail, finest first. Two bodies are two nodes, so two materials never
+ * have to be merged into one; a part built from several bodies is a node with several
+ * geometry-bearing children. Rendering a scene at level *i* therefore means taking entry *i*
+ * (or the last, where a node has fewer) of every node — never several entries of one node.
+ *
  * Instanced subtrees are shared: two scene paths reaching the same underlying node hold the
  * *same* [SceneNode] (and [Mesh]) object. All types here are immutable, so sharing is safe;
  * equality stays structural.
@@ -36,9 +43,9 @@ data class SceneNode(
     /** The node's name, decoded per the JT_PROP_NAME convention; empty when unnamed. */
     val name: String,
     val transform: Mat4,
-    /** One triangle mesh per decoded LOD, finest first (trimmed by [LodPolicy]). */
+    /** This node's body as one triangle mesh per decoded LOD, finest first (see [LodPolicy]). */
     val meshes: List<Mesh>,
-    /** One polyline set per decoded LOD, finest first — wireframe-only parts land here. */
+    /** This node's body as one polyline set per decoded LOD — wireframe bodies land here. */
     val polylines: List<PolylineSet>,
     val material: Material?,
     val children: List<SceneNode>,
@@ -201,9 +208,9 @@ enum class LengthUnit(
 
 /** Which LODs [readScene] carries into the scene. */
 enum class LodPolicy {
-    /** Every decoded LOD, finest first — the mesh/polyline lists carry one entry per tier. */
+    /** Every decoded LOD of every body, finest first — one list entry per tier it appears in. */
     ALL_LODS,
 
-    /** Only the finest decoded LOD of each shape (failed finer tiers are noted, not hidden). */
+    /** Only the finest decoded LOD of each body (failed finer tiers are noted, not hidden). */
     FINEST_ONLY,
 }

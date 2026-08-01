@@ -805,7 +805,8 @@ surface). Deviations from the issue #1 sketch, each deliberate:
    named note on the Scene (`SCENE_STRUCTURE_UNAVAILABLE`, `SCENE_STRUCTURE_INCOMPLETE`,
    `SCENE_GEOMETRY_UNAVAILABLE` — locating the node by its nearest *named* ancestor and the
    segment GUID — `SCENE_UNITS_UNRECOGNIZED`, `SCENE_UNITS_MIXED`,
-   `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`, `SCENE_MATERIAL_AMBIGUOUS`). A part whose
+   `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`, `SCENE_MATERIAL_AMBIGUOUS`,
+   `SCENE_LOD_TIERS_UNALIGNED`). A part whose
    geometry refuses to decode keeps its named node, empty, plus the note (pinned by a
    synthetic whole-file test). Note lists live on the Scene, not on nodes — nodes stay
    shareable across instance paths.
@@ -828,16 +829,74 @@ semantics recorded: two paths to one part hold the *same* immutable `SceneNode`/
 objects (pinned by `assertSame` on the NIST hex nut's 10 instances); equality stays
 structural, sharing is an optimization the consumer may exploit but must not rely on for
 distinctness. The §13.9 Figure 160 part convention (Part → Range LOD → per-tier Group →
-Shapes) collapses to one named part node: a LOD node's children become the per-tier
-mesh/polyline lists (child order = tier order, finest first — byte-verified by the strictly
-descending NIST triangle counts); a *pass-through* child (no name, identity transform, no
-material, no geometry) is spliced out; a sole nameless transform-free child is absorbed.
+Shapes) collapses to one named part node: a LOD node's shapes become the part's geometry
+(see *One node per body* below), a *pass-through* child (no name, identity transform, no
+material, no geometry) is spliced out, and a sole nameless transform-free child is absorbed.
 The collapse loses nothing the Scene models — it is what turns the 9.5 fixture into root →
 assembly → 12 named parts and the NIST file into root → 38 placed instances over 13 shared
-parts. Transforms *inside* a LOD tier (below the point where tiers become meshes) are baked
-into the vertex coordinates (points `p·M`, normals via inverse-transpose, renormalized);
-multiple shapes in one tier merge with index offsets (differing effective materials →
-`SCENE_MATERIAL_AMBIGUOUS`, first wins).
+parts. Transforms *inside* a LOD tier (below the point where a tier's shapes become nodes)
+are baked into the vertex coordinates (points `p·M`, normals via inverse-transpose,
+renormalized).
+
+### One node per body, one list entry per LOD (issue #13, Bernhard 2026-08-02)
+
+The first model made a **LOD tier** the unit of geometry: a tier became one merged mesh, and
+`SceneNode.meshes[i]` was tier *i*. That survives the NIST fixture, where a tier holds one
+shape, and dies on `KR360-1.jt` (NetAllied 9.5), whose single tier is a Group Node holding 17
+shapes — 11 tri-strip bodies with **11 different materials**, 5 polyline sets and a point set.
+One merged mesh can only carry one material, so ten colours of a colour-coded assembly were
+named away by `SCENE_MATERIAL_AMBIGUOUS` and the file rendered black. A Group Node under a
+tier is ordinary JT, not exotic, so this was a fidelity ceiling in the seam ConstructIt
+consumes, not a producer quirk.
+
+**The model now**: the unit of geometry is the **body** — one shape node of the LSG — and the
+unit of the `meshes`/`polylines` lists is the **LOD**. A LOD node's tiers are its alternative
+representations; the shapes *within* a tier are paired with the shapes of the other tiers by
+**position in the tier's shape order**, and each such *shape slot* becomes one scene node whose
+mesh list is that body across the tiers, finest first, and whose material is its own. So a part
+with M tiers of N shapes is a node with N geometry-bearing children of M meshes each; with
+N = 1 the sole nameless slot is absorbed by the existing collapse, which is exactly where the
+familiar "one mesh per tier on the part node" comes from — the NIST scene is byte-for-byte the
+same as before (8 mesh parts × 3 tiers, 5 polyline parts × 3, 24 shared meshes). Rendering
+level *i* means taking entry *i* of **every** node, never several entries of one node.
+
+Consequences recorded, each deliberate:
+
+* **`SCENE_MATERIAL_AMBIGUOUS` is nearly spent.** Within a tier no ambiguity can arise any
+  more — one shape has one effective material. It fires only where the tiers *of one body*
+  disagree, and no fixture in the corpus does.
+* **Slots are numbered over shape *nodes*, not over decoded bodies**, so a tier whose shape
+  failed to decode (already a named `SCENE_GEOMETRY_UNAVAILABLE`) does not shift the pairing of
+  the others — the documented FINEST_ONLY fallback keeps working unchanged, with one note, not
+  two.
+* **Positional pairing is the only correspondence the file offers**, and it is safe for
+  geometry: whatever the pairing, entry *i* of every node comes from tier *i*, so a uniform
+  choice renders exactly that tier. It is *not* safe when a **coarser tier holds more shapes
+  than a finer one** — then some slot's ladder has a hole and its entry *k* is no longer
+  tier *k*. That, and only that, is `SCENE_LOD_TIERS_UNALIGNED`. Fewer shapes in a coarser tier
+  is ordinary (a body that stops at some level) and is not noted.
+* **A body's own ladder**: a shape node referencing several Shape LOD segments (types 6–16) is
+  read as that body's own tiers, ordered by segment type (LOD0 finest) instead of merged into
+  one mesh — the old merge would have drawn LOD0 and LOD1 on top of each other in silence. No
+  fixture writes one; the ordering is Table 6's.
+* **Names**: a slot node takes its shape node's `JT_PROP_NAME`, which real producers leave
+  unset — so split bodies are unnamed nodes under a named part. Inventing `"part #3"` names
+  would put a string in the model that the file does not contain; the guarantee kept instead is
+  *locatability* (every geometry-bearing node is named or has a named ancestor), which is what
+  `SceneFixtureTest` now asserts.
+
+Alternatives rejected: **(a) keeping the merge and letting `Mesh` carry per-triangle material
+ranges** — that puts a second material concept in the model and a submesh loop in every
+consumer, for a case the tree already expresses; **(b) making the tier a node level of its own**
+(part → tier → shapes) — the scene has no way to say "these children are alternatives", so a
+consumer would render all tiers superimposed, which is a lie a note cannot fix; **(c) splitting
+per shape but refusing coarse tiers when the counts differ** — it never mixes tiers, but it
+drops geometry that decoded perfectly, and carrying it with a named note is the better trade.
+
+**Write side**: a `SceneNode` carrying both meshes and polyline sets is now refused by
+`writeJt` (`JtWriteException`) — it is two bodies on one node, and the read side would return
+it as two siblings. This is the same discipline as the writer's other refusals: never write a
+file that reads back as a different scene.
 
 **Names — what the fixtures actually use** (§13.8, Table 79): both producers put
 `JT_PROP_NAME` (hidden form, no `::`) on instance nodes and the partition, with the encoded
@@ -996,14 +1055,17 @@ producers do so and readers must accept either case; it sits on the partition no
 ### What the writer refuses, and why it is a read-side question
 
 `readScene` *collapses* structure (pass-through children are spliced out, a sole unnamed
-transform-free child is absorbed into its parent, geometry lands on named part nodes). Two scene
-shapes therefore have no faithful pre-image, and the writer refuses them by naming the path
-instead of writing a file that reads back differently:
+transform-free child is absorbed into its parent, geometry lands on named part nodes) and puts
+**one body on one node**. Three scene shapes therefore have no faithful pre-image, and the
+writer refuses them by naming the path instead of writing a file that reads back differently:
 
 1. a node carrying **geometry and children** — the collapse only ever puts geometry on a node
    whose children it absorbed, so re-reading would hang the geometry on an extra unnamed child;
 2. a child the collapse would remove: **unnamed + identity transform + no material + no
-   geometry** (spliced out), or a **sole** unnamed identity-transform child (absorbed).
+   geometry** (spliced out), or a **sole** unnamed identity-transform child (absorbed);
+3. a node carrying **meshes and polyline sets** (issue #13) — that is two bodies on one node,
+   and the only LSG shape for it is a tier holding a tri-strip shape next to a polyline shape,
+   which reads back as two sibling nodes.
 
 Both are checks against `readScene`'s exact rules, not conservative guesses. Lifting them is a
 Layer 2 *read-side* extension (a rule that hoists a geometry-only child onto its parent), so
@@ -1457,7 +1519,8 @@ Recorded observations from the same evidence:
 | ~~`writeJt(scene)` — Layer 2 write side~~ | **done** (issue #8, see *Layer 2, write side*): scene → LSG + shape LOD segments, round-trip-verified on both fixtures; what remains is the external validation (JT2Go opening the staged candidates) before any of it freezes as a golden |
 | Vertex-sharing tri-strip topology (a real Annex D encoder) | file size or a consumer demands it: today one component per triangle costs three coordinates per triangle (NIST rewrite 6.1 MB vs. the original 1.6 MB) and no entropy coding at all — correct and boring by policy |
 | Entropy-coded Int32CDPs on the write side (bitlength/arithmetic/chopper/MTF) | a consumer needs smaller files than the null CODEC produces; the decoders exist, so an encoder can be validated against them |
-| Writing a scene node that carries geometry *and* children, or a child the Layer 2 collapse would splice out/absorb | a read-side rule that hoists a geometry-only child onto its parent (today: a named `JtWriteException`, never a file that reads back differently) |
+| Writing a scene node that carries geometry *and* children, a child the Layer 2 collapse would splice out/absorb, or a node carrying meshes *and* polyline sets | a read-side rule that hoists a geometry-only child onto its parent, resp. a body concept that can be triangles and lines at once (today: a named `JtWriteException`, never a file that reads back differently) |
+| A point concept in the Layer 2 scene (`SceneNode.points`) | **the writer can author a Point Set** — i.e. the v10 Point Set LOD body above becomes `done`. The scene is a two-way seam: `readScene` growing points alone would turn today's honest read-side `SCENE_GEOMETRY_UNAVAILABLE` into a hard `JtWriteException` on the one fixture that carries a point set, which round-trips today — a strictly worse trade than the note. The Layer 2 half is an afternoon (`PointSet(positions)` next to `PolylineSet`, one collector branch); it lands *with* the write half, and then the note disappears in both directions at once. Until then the point set of `KR360-1.jt` is named, never silently dropped |
 | Writing face groups, per-vertex colours, texture coordinates, PMI, B-rep | the Layer 2 scene grows the concept (face groups are read but the Scene model has no place for them yet) |
 | Per-part units precedence (lowest node wins) for mixed-unit files | first real fixture declaring conflicting units (today: `SCENE_UNITS_MIXED` + `UNSPECIFIED`, never a guess) |
 | Force/final/field-inhibit attribute accumulation in the scene | first real fixture using them (today: named note `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`; both fixtures use plain accumulation) |

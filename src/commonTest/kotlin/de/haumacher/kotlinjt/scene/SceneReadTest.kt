@@ -380,8 +380,9 @@ class SceneReadTest {
         )
     }
 
+    // spec: §13.9 (a LOD tier is a Group Node: several shapes at one level of detail)
     @Test
-    fun multipleShapesInOneTierMergeWithValidIndices() {
+    fun multipleShapesInOneTierBecomeSiblingNodesUnderThePart() {
         val b = SceneLsgBuilder()
         b.partition(0, listOf(1))
         b.instance(1, 100)
@@ -399,19 +400,28 @@ class SceneReadTest {
                 LodPolicy.ALL_LODS,
                 geometryResolver(segmentA to decoded(testTriangleGeometry()), segmentB to decoded(testTriangleGeometry(3f))),
             )
-        val mesh = scene.root.children.single().meshes.single()
-        assertEquals(6, mesh.positions.size)
-        assertEquals(2, mesh.normals.size)
-        assertEquals(2, mesh.triangles.size)
-        for (t in mesh.triangles) {
-            for (index in listOf(t.v0, t.v1, t.v2)) assertTrue(index in mesh.positions.indices)
-            for (index in listOf(t.n0, t.n1, t.n2)) assertTrue(index in mesh.normals.indices)
+        // The two shapes are two bodies, so they are two nodes — not one merged mesh.
+        val part = scene.root.children.single()
+        assertEquals("part", part.name)
+        assertEquals(emptyList(), part.meshes, "the part groups the bodies; it carries none itself")
+        assertEquals(2, part.children.size)
+        for (child in part.children) {
+            val mesh = child.meshes.single()
+            assertEquals(3, mesh.positions.size)
+            assertEquals(1, mesh.triangles.size)
+            for (t in mesh.triangles) {
+                for (index in listOf(t.v0, t.v1, t.v2)) assertTrue(index in mesh.positions.indices)
+                for (index in listOf(t.n0, t.n1, t.n2)) assertTrue(index in mesh.normals.indices)
+            }
         }
-        assertEquals(3f, mesh.positions[3].x, "the second shape's vertices follow the first's")
+        assertEquals(0f, part.children[0].meshes.single().positions[0].x, "tier order is the file's shape order")
+        assertEquals(3f, part.children[1].meshes.single().positions[0].x)
+        assertEquals(emptyList(), scene.notes, "nothing was abstracted away, so nothing is noted")
     }
 
+    // spec: §13.9 (a shape's material is its own; the scene never has to pick between shapes)
     @Test
-    fun conflictingMaterialsInOneMergedTierAreNoted() {
+    fun eachShapeOfATierKeepsItsOwnMaterial() {
         val b = SceneLsgBuilder()
         b.partition(0, listOf(1))
         b.material(60, Rgba(1f, 0f, 0f, 1f))
@@ -431,8 +441,154 @@ class SceneReadTest {
                 LodPolicy.ALL_LODS,
                 geometryResolver(segmentA to decoded(testTriangleGeometry()), segmentB to decoded(testTriangleGeometry(3f))),
             )
-        assertEquals(listOf("SCENE_MATERIAL_AMBIGUOUS"), scene.notes.map { it.name })
-        assertEquals(Color(1f, 0f, 0f, 1f), assertNotNull(scene.root.children.single().material).baseColor)
+        assertEquals(emptyList(), scene.notes, "two shapes with two materials are two nodes, not an ambiguity")
+        val part = scene.root.children.single()
+        assertEquals(
+            listOf(Color(1f, 0f, 0f, 1f), Color(0f, 0f, 1f, 1f)),
+            part.children.map { assertNotNull(it.material).baseColor },
+        )
+    }
+
+    // spec: §13.9 (Range LOD: the tiers are alternatives, so a shape's tiers are its own ladder)
+    @Test
+    fun everyShapeOfAMultiTierPartKeepsItsOwnLodLadderAndMaterial() {
+        val segments = (0 until 6).map { testGuid(0x20 + it) }
+        val b = SceneLsgBuilder()
+        b.partition(0, listOf(1))
+        b.material(60, Rgba(1f, 0f, 0f, 1f))
+        b.material(61, Rgba(0f, 0f, 1f, 1f))
+        b.material(62, Rgba(0f, 1f, 0f, 1f))
+        b.instance(1, 100)
+        b.property(1, "JT_PROP_NAME", "part;0;1:")
+        b.part(100, listOf(101))
+        // Two tiers of three shapes each: shape *j* of every tier is one body's LOD ladder.
+        b.rangeLod(101, listOf(102, 103))
+        b.groupNode(102, listOf(110, 111, 112))
+        b.groupNode(103, listOf(120, 121, 122))
+        for (tier in 0 until 2) {
+            for (shape in 0 until 3) {
+                val id = 110 + 10 * tier + shape
+                b.triStripShape(id, listOf(60 + shape))
+                b.shapeSegment(id, segments[3 * tier + shape], segmentType = 7 + tier)
+            }
+        }
+        val fine = testTriangleGeometry()
+        val coarse = testTriangleGeometry(5f)
+        val scene =
+            buildScene(
+                b.build(),
+                LodPolicy.ALL_LODS,
+                geometryResolver(*segments.mapIndexed { i, id -> id to decoded(if (i < 3) fine else coarse) }.toTypedArray()),
+            )
+
+        assertEquals(emptyList(), scene.notes)
+        val part = scene.root.children.single()
+        assertEquals(3, part.children.size, "three bodies, three nodes")
+        for ((index, body) in part.children.withIndex()) {
+            assertEquals(2, body.meshes.size, "each body carries its own two tiers, finest first")
+            assertEquals(0f, body.meshes[0].positions[0].x)
+            assertEquals(5f, body.meshes[1].positions[0].x)
+            assertEquals(
+                listOf(Color(1f, 0f, 0f, 1f), Color(0f, 0f, 1f, 1f), Color(0f, 1f, 0f, 1f))[index],
+                assertNotNull(body.material).baseColor,
+            )
+        }
+    }
+
+    @Test
+    fun finestOnlyKeepsOneTierOfEveryBodyOfAMultiShapeTier() {
+        val segments = (0 until 4).map { testGuid(0x30 + it) }
+        val b = SceneLsgBuilder()
+        b.partition(0, listOf(1))
+        b.instance(1, 100)
+        b.property(1, "JT_PROP_NAME", "part;0;1:")
+        b.part(100, listOf(101))
+        b.rangeLod(101, listOf(102, 103))
+        b.groupNode(102, listOf(110, 111))
+        b.groupNode(103, listOf(120, 121))
+        for (tier in 0 until 2) {
+            for (shape in 0 until 2) {
+                val id = 110 + 10 * tier + shape
+                b.triStripShape(id)
+                b.shapeSegment(id, segments[2 * tier + shape], segmentType = 7 + tier)
+            }
+        }
+        val scene =
+            buildScene(
+                b.build(),
+                LodPolicy.FINEST_ONLY,
+                geometryResolver(
+                    *segments.mapIndexed { i, id -> id to decoded(testTriangleGeometry(if (i < 2) 0f else 5f)) }
+                        .toTypedArray(),
+                ),
+            )
+        val part = scene.root.children.single()
+        assertEquals(2, part.children.size)
+        for (body in part.children) {
+            assertEquals(1, body.meshes.size, "FINEST_ONLY keeps one tier per body, not one body")
+            assertEquals(0f, body.meshes[0].positions[0].x)
+        }
+    }
+
+    @Test
+    fun aCoarserTierWithMoreShapesThanTheFinerOneIsNoted() {
+        val segments = (0 until 3).map { testGuid(0x40 + it) }
+        val b = SceneLsgBuilder()
+        b.partition(0, listOf(1))
+        b.instance(1, 100)
+        b.property(1, "JT_PROP_NAME", "part;0;1:")
+        b.part(100, listOf(101))
+        // One shape in the finest tier, two in the coarse one: nothing states which coarse
+        // shape stands for the fine one, so the positional pairing is named, not silent.
+        b.rangeLod(101, listOf(102, 103))
+        b.groupNode(102, listOf(110))
+        b.groupNode(103, listOf(120, 121))
+        b.triStripShape(110)
+        b.shapeSegment(110, segments[0])
+        b.triStripShape(120)
+        b.shapeSegment(120, segments[1], segmentType = 8)
+        b.triStripShape(121)
+        b.shapeSegment(121, segments[2], segmentType = 8)
+        val scene =
+            buildScene(
+                b.build(),
+                LodPolicy.ALL_LODS,
+                geometryResolver(*segments.map { it to decoded(testTriangleGeometry()) }.toTypedArray()),
+            )
+        assertEquals(listOf("SCENE_LOD_TIERS_UNALIGNED"), scene.notes.map { it.name })
+        assertTrue("[1, 2]" in scene.notes[0].message, "the note states the shapes per tier: ${scene.notes[0].message}")
+        val part = scene.root.children.single()
+        assertEquals(2, part.children.size)
+        assertEquals(2, part.children[0].meshes.size, "the paired body keeps both tiers")
+        assertEquals(1, part.children[1].meshes.size, "the unpaired coarse body is carried, not dropped")
+    }
+
+    @Test
+    fun aFinerTierWithMoreShapesThanTheCoarseOneIsOrdinary() {
+        val segments = (0 until 3).map { testGuid(0x50 + it) }
+        val b = SceneLsgBuilder()
+        b.partition(0, listOf(1))
+        b.instance(1, 100)
+        b.property(1, "JT_PROP_NAME", "part;0;1:")
+        b.part(100, listOf(101))
+        b.rangeLod(101, listOf(102, 103))
+        b.groupNode(102, listOf(110, 111))
+        b.groupNode(103, listOf(120))
+        b.triStripShape(110)
+        b.shapeSegment(110, segments[0])
+        b.triStripShape(111)
+        b.shapeSegment(111, segments[1])
+        b.triStripShape(120)
+        b.shapeSegment(120, segments[2], segmentType = 8)
+        val scene =
+            buildScene(
+                b.build(),
+                LodPolicy.ALL_LODS,
+                geometryResolver(*segments.map { it to decoded(testTriangleGeometry()) }.toTypedArray()),
+            )
+        assertEquals(emptyList(), scene.notes, "a body that simply stops at a coarser level is not a misalignment")
+        val part = scene.root.children.single()
+        assertEquals(listOf(2, 1), part.children.map { it.meshes.size })
     }
 
     @Test

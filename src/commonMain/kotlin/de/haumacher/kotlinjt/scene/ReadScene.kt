@@ -347,86 +347,136 @@ private class SceneBuilder(
             name.isEmpty() && transform == Mat4.IDENTITY && material == null &&
                 meshes.isEmpty() && polylines.isEmpty()
 
-    /** A shape node reached outside any LOD node: a single-LOD leaf. */
+    /** A shape node reached outside any LOD node: one shape, hence one scene node. */
     private fun convertShapeNode(node: ShapeNodeElement): SceneNode {
         val local = localAttributes(node)
-        val collector = TierCollector()
-        collectShapeGeometry(node, Mat4.IDENTITY, local.material, collector)
-        val (mesh, meshMaterial) = mergeMeshes(collector, "shape node #${node.objectId}")
-        return SceneNode(
+        val collected = mutableListOf<CollectedShape>()
+        collectShapeGeometry(node, Mat4.IDENTITY, local.material, collected)
+        return geometryNode(
             nodeName(node.objectId),
             local.transform,
-            listOfNotNull(mesh),
-            listOfNotNull(mergePolylines(collector)),
-            meshMaterial ?: local.material,
-            emptyList(),
+            collected.filter { it.hasGeometry },
+            local.material,
+            "shape node #${node.objectId}",
         )
     }
 
     // spec: §13.9 (Range LOD Node Alternative Rep Selection — child order is tier order)
 
     /**
-     * A LOD node: each child subtree is one alternative representation, finest first
-     * (§13.9 range LOD selection order). The tiers become the mesh/polyline lists — this is
-     * where "one entry per LOD" comes from; the node itself is nameless in the part
-     * convention and gets absorbed by its part.
+     * A LOD node: each child subtree is one alternative representation of the *same* content,
+     * finest first (§13.9 range LOD selection order). Every shape below a tier becomes its own
+     * scene node — a **shape slot**, identified by its position in the tier's shape order and
+     * paired with the shape at that position in the other tiers, so the slot's mesh list is
+     * that shape's LOD ladder and its material is its own. The LOD node itself never carries
+     * geometry; with a single slot the collapse in [convertGroupLike] absorbs the slot into the
+     * part, which is where the familiar "one mesh per LOD tier on the part node" comes from.
+     *
+     * Slots are numbered over *shape nodes*, not over decoded bodies, so a tier whose shape
+     * failed to decode (already a named refusal) does not shift the pairing of the others.
      */
     private fun convertLodNode(node: NodeElement): SceneNode {
         val local = localAttributes(node)
-        val meshes = mutableListOf<Mesh>()
-        val polylines = mutableListOf<PolylineSet>()
-        var material: Material? = null
-        for (tierId in node.childObjectIds) {
-            val collector = TierCollector()
-            collectTier(tierId, Mat4.IDENTITY, local.material, collector)
-            val (mesh, meshMaterial) = mergeMeshes(collector, "LOD tier node #$tierId")
-            val poly = mergePolylines(collector)
-            if (mesh != null) {
-                if (lodPolicy == LodPolicy.ALL_LODS || meshes.isEmpty()) meshes.add(mesh)
-                if (material == null) {
-                    material = meshMaterial
-                } else if (meshMaterial != null && meshMaterial != material) {
-                    notes.add(
-                        LoadNote.SceneMaterialAmbiguous(
-                            "LOD tiers of node #${node.objectId} carry different materials; the finest tier's is used",
-                        ),
+        val tiers =
+            node.childObjectIds.map { tierId ->
+                val shapes = mutableListOf<CollectedShape>()
+                collectTier(tierId, Mat4.IDENTITY, local.material, shapes)
+                shapes.toList()
+            }
+        val slotCount = tiers.maxOfOrNull { it.size } ?: 0
+        // A coarser tier holding *more* shapes than a finer one leaves a hole in some slot's
+        // ladder: that slot's entry k would no longer be tier k. Fewer shapes in a coarser tier
+        // is ordinary (a body that stops at some level), and needs no note.
+        if (tiers.zipWithNext().any { (fine, coarse) -> coarse.size > fine.size }) {
+            notes.add(LoadNote.SceneLodTiersUnaligned(node.objectId, tiers.map { it.size }))
+        }
+        val slots =
+            (0 until slotCount).mapNotNull { slot ->
+                val entries = tiers.mapNotNull { it.getOrNull(slot) }.filter { it.hasGeometry }
+                if (entries.isEmpty()) {
+                    null
+                } else {
+                    geometryNode(
+                        nodeName(entries.first().objectId),
+                        Mat4.IDENTITY,
+                        entries,
+                        null,
+                        "shape slot $slot of LOD node #${node.objectId} " +
+                            "(shape nodes ${entries.joinToString { "#${it.objectId}" }})",
                     )
                 }
             }
-            if (poly != null && (lodPolicy == LodPolicy.ALL_LODS || polylines.isEmpty())) polylines.add(poly)
+        return SceneNode(nodeName(node.objectId), local.transform, emptyList(), emptyList(), local.material, slots)
+    }
+
+    /**
+     * One scene node from the geometry of one shape across the LOD tiers it appears in: the
+     * mesh and polyline lists are that shape's tiers, finest first, each baked with the
+     * transform in effect where it was found (see [collectTier]). Materials replace down the
+     * LSG, so all of [entries] normally agree; tiers that disagree yield the ambiguity note
+     * rather than a silent choice. [inherited] is the material to fall back to when the shape
+     * introduces none.
+     */
+    private fun geometryNode(
+        name: String,
+        transform: Mat4,
+        entries: List<CollectedShape>,
+        inherited: Material?,
+        where: String,
+    ): SceneNode {
+        val meshes = mutableListOf<Mesh>()
+        val polylines = mutableListOf<PolylineSet>()
+        var material: Material? = null
+        var ambiguous = false
+        for (entry in entries) {
+            for (geometry in entry.triangles) meshes.add(bakeMesh(geometry, entry.transform))
+            for (geometry in entry.polylines) polylines.add(bakePolylineSet(geometry, entry.transform))
+            if (material == null) {
+                material = entry.material
+            } else if (entry.material != null && entry.material != material && !ambiguous) {
+                ambiguous = true
+                notes.add(
+                    LoadNote.SceneMaterialAmbiguous(
+                        "$where draws ${entries.mapNotNull { it.material }.distinct().size} different materials " +
+                            "across its LOD tiers; the finest tier's is used",
+                    ),
+                )
+            }
         }
-        return SceneNode(nodeName(node.objectId), local.transform, meshes, polylines, material ?: local.material, emptyList())
+        val keep = if (lodPolicy == LodPolicy.FINEST_ONLY) 1 else Int.MAX_VALUE
+        return SceneNode(name, transform, meshes.take(keep), polylines.take(keep), material ?: inherited, emptyList())
     }
 
     // --- Geometry collection within one LOD tier ---
 
-    private class CollectedMesh(
-        val geometry: TriStripGeometry,
+    /**
+     * One shape node's geometry, with the attributes in effect where the tier walk found it.
+     * [triangles] and [polylines] hold that shape node's own late-loaded bodies in Shape-LOD
+     * segment-type order; a shape node that resolved nothing is collected empty, so it still
+     * occupies its slot in the tier's shape order.
+     */
+    private class CollectedShape(
+        val objectId: Int,
         val transform: Mat4,
         val material: Material?,
-    )
-
-    private class CollectedPolylines(
-        val geometry: PolylineGeometry,
-        val transform: Mat4,
-    )
-
-    private class TierCollector {
-        val meshes = mutableListOf<CollectedMesh>()
-        val polylines = mutableListOf<CollectedPolylines>()
+        val triangles: List<TriStripGeometry>,
+        val polylines: List<PolylineGeometry>,
+    ) {
+        val hasGeometry: Boolean get() = triangles.isNotEmpty() || polylines.isNotEmpty()
     }
 
     /**
-     * Walks one LOD tier subtree, accumulating transforms (`A(child) = M(child) · A(parent)`)
-     * and materials (replacement) into the collected geometry — inner structure below the
-     * tier split cannot become scene nodes (the tier is one mesh), so its attributes are
-     * folded into the geometry itself.
+     * Walks one LOD tier subtree in child order, accumulating transforms
+     * (`A(child) = M(child) · A(parent)`) and materials (replacement) onto the shapes it finds.
+     * Structure *inside* a tier does not become scene nodes — the tier is a list of shapes, and
+     * the nodes above them exist to place and colour them — so their transforms are baked into
+     * the geometry and their materials ride on the collected shape.
      */
     private fun collectTier(
         objectId: Int,
         parentTransform: Mat4,
         inheritedMaterial: Material?,
-        out: TierCollector,
+        out: MutableList<CollectedShape>,
     ) {
         val node = nodesById[objectId]
         if (node == null) {
@@ -451,17 +501,19 @@ private class SceneBuilder(
         node: ShapeNodeElement,
         transform: Mat4,
         material: Material?,
-        out: TierCollector,
+        out: MutableList<CollectedShape>,
     ) {
         // spec: §13.1 (Late-Loading Data: shape geometry lives in its own segment, referenced
         // by a Late Loaded Property Atom whose segment type is a Shape LOD type)
-        val segmentIds =
+        val references =
             propertiesByElement[node.objectId].orEmpty().mapNotNull { entry ->
                 (atomsById[entry.valuePropertyAtomObjectId] as? LateLoadedPropertyAtomElement)
                     ?.takeIf { it.segmentType in SHAPE_SEGMENT_TYPES }
-                    ?.segmentId
             }
-        if (segmentIds.isEmpty()) {
+                // Table 6 orders the Shape LOD types by detail (LOD0 finest); a shape node
+                // referencing several of them states its own ladder, and the list is that.
+                .sortedBy { it.segmentType }
+        if (references.isEmpty()) {
             if (node !is NullShapeNodeElement) {
                 notes.add(
                     LoadNote.SceneGeometryUnavailable(
@@ -472,9 +524,13 @@ private class SceneBuilder(
                     ),
                 )
             }
+            out.add(CollectedShape(node.objectId, transform, material, emptyList(), emptyList()))
             return
         }
-        for (segmentId in segmentIds) {
+        val triangles = mutableListOf<TriStripGeometry>()
+        val polylines = mutableListOf<PolylineGeometry>()
+        for (reference in references) {
+            val segmentId = reference.segmentId
             when (val source = resolveShape(segmentId)) {
                 is ShapeSource.Unavailable ->
                     notes.add(
@@ -492,68 +548,32 @@ private class SceneBuilder(
                             LoadNote.SceneGeometryUnavailable(nearestName(node.objectId), node.objectId, segmentId, why),
                         )
                     }
-                    source.triangles?.let { out.meshes.add(CollectedMesh(it, transform, material)) }
-                    source.polylines?.let { out.polylines.add(CollectedPolylines(it, transform)) }
+                    source.triangles?.let { triangles.add(it) }
+                    source.polylines?.let { polylines.add(it) }
                 }
             }
         }
+        out.add(CollectedShape(node.objectId, transform, material, triangles, polylines))
     }
 
-    // --- Merging collected geometry into one Mesh / PolylineSet per tier ---
+    // --- Baking one decoded body into one scene mesh / polyline set ---
 
-    /** Merges the collected triangle geometry; differing materials produce a named note. */
-    private fun mergeMeshes(
-        collector: TierCollector,
-        where: String,
-    ): Pair<Mesh?, Material?> {
-        val collected = collector.meshes
-        if (collected.isEmpty()) return null to null
-        val materials = collected.map { it.material }.distinct()
-        if (materials.size > 1) {
-            notes.add(
-                LoadNote.SceneMaterialAmbiguous(
-                    "$where merges ${collected.size} shapes with ${materials.size} different materials; the first is used",
-                ),
-            )
-        }
-        val positions = mutableListOf<Vec3>()
-        val normals = mutableListOf<Vec3>()
-        val triangles = mutableListOf<Mesh.Triangle>()
-        for (part in collected) {
-            val positionBase = positions.size
-            val normalBase = normals.size
-            positions.addAll(bakePoints(part.geometry.vertices, part.transform))
-            normals.addAll(bakeNormals(part.geometry.normals, part.transform))
-            for (t in part.geometry.triangles) {
-                triangles.add(
-                    Mesh.Triangle(
-                        t.v0 + positionBase,
-                        t.v1 + positionBase,
-                        t.v2 + positionBase,
-                        if (t.n0 < 0) -1 else t.n0 + normalBase,
-                        if (t.n1 < 0) -1 else t.n1 + normalBase,
-                        if (t.n2 < 0) -1 else t.n2 + normalBase,
-                    ),
-                )
-            }
-        }
-        return Mesh(positions, normals, triangles) to materials.firstNotNullOfOrNull { it }
-    }
+    /** One decoded tri-strip body, its vertices placed by the transform in effect. */
+    private fun bakeMesh(
+        geometry: TriStripGeometry,
+        transform: Mat4,
+    ): Mesh =
+        Mesh(
+            bakePoints(geometry.vertices, transform),
+            bakeNormals(geometry.normals, transform),
+            geometry.triangles.map { Mesh.Triangle(it.v0, it.v1, it.v2, it.n0, it.n1, it.n2) },
+        )
 
-    private fun mergePolylines(collector: TierCollector): PolylineSet? {
-        val collected = collector.polylines
-        if (collected.isEmpty()) return null
-        val positions = mutableListOf<Vec3>()
-        val lines = mutableListOf<List<Int>>()
-        for (part in collected) {
-            val base = positions.size
-            positions.addAll(bakePoints(part.geometry.vertices, part.transform))
-            for (line in part.geometry.polylines) {
-                lines.add(line.vertexIndices.map { it + base })
-            }
-        }
-        return PolylineSet(positions, lines)
-    }
+    /** One decoded polyline body, its vertices placed by the transform in effect. */
+    private fun bakePolylineSet(
+        geometry: PolylineGeometry,
+        transform: Mat4,
+    ): PolylineSet = PolylineSet(bakePoints(geometry.vertices, transform), geometry.polylines.map { it.vertexIndices })
 
     private fun bakePoints(
         vertices: List<de.haumacher.kotlinjt.lsg.Vec3F32>,

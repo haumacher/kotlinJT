@@ -61,11 +61,22 @@ class GoldenCandidateWriterTest {
         )
 
         val bolt = part("bolt.prt", unitCubeMesh(), Material(Color(0.8f, 0.15f, 0.1f, 1f), 0.4f, 0f))
+        // One body per node (issue #13): the plate's two LOD tiers and its wireframe are two
+        // bodies, so they are two parts — a node holding both is refused by the writer.
         val plate =
             SceneNode(
                 "plate.prt",
                 Mat4.IDENTITY,
                 listOf(unitCubeMesh(), coarseCubeMesh()),
+                emptyList(),
+                Material(Color(0.2f, 0.4f, 0.9f, 1f), 0.8f, 0f),
+                emptyList(),
+            )
+        val plateWire =
+            SceneNode(
+                "plate wireframe.prt",
+                Mat4.IDENTITY,
+                emptyList(),
                 listOf(testPolylines()),
                 Material(Color(0.2f, 0.4f, 0.9f, 1f), 0.8f, 0f),
                 emptyList(),
@@ -83,6 +94,7 @@ class GoldenCandidateWriterTest {
                         SceneNode("bolt#1", translation(20.0, 0.0, 0.0), emptyList(), emptyList(), null, listOf(bolt)),
                         SceneNode("bolt#2", translation(0.0, 30.0, 5.0), emptyList(), emptyList(), null, listOf(bolt)),
                         plate,
+                        plateWire,
                     ),
                 ),
             ),

@@ -67,6 +67,26 @@ class SceneFixtureTest {
                 }.distinct()
             }.orEmpty()
 
+        val nodesById: Map<Int, NodeElement> =
+            lsg?.graphElements?.filterIsInstance<NodeElement>()?.associateBy { it.objectId }.orEmpty()
+
+        /** Late-loaded shape segments per shape node, in Shape-LOD segment-type order. */
+        val segmentsByShapeNode: Map<Int, List<de.haumacher.kotlinjt.io.Guid>> =
+            lsg?.let { document ->
+                val atoms =
+                    document.propertyAtoms.filterIsInstance<LateLoadedPropertyAtomElement>().associateBy { it.objectId }
+                val shapeIds = document.graphElements.filterIsInstance<ShapeNodeElement>().map { it.objectId }.toSet()
+                document.propertyTable?.tables.orEmpty()
+                    .filter { it.elementObjectId in shapeIds }
+                    .associate { table ->
+                        table.elementObjectId to
+                            table.entries.mapNotNull { atoms[it.valuePropertyAtomObjectId] }
+                                .filter { it.segmentType in 6..16 }
+                                .sortedBy { it.segmentType }
+                                .map { it.segmentId }
+                    }
+            }.orEmpty()
+
         /** Shape-node object id per referenced shape segment GUID. */
         val shapeNodeBySegment: Map<de.haumacher.kotlinjt.io.Guid, Int> =
             lsg?.let { document ->
@@ -88,11 +108,12 @@ class SceneFixtureTest {
                 node.childObjectIds.map { it to node.objectId }
             }?.toMap().orEmpty()
 
+        val lodNodes: Set<Int> =
+            lsg?.graphElements?.filter { it is LodNodeElement || it is RangeLodNodeElement }
+                ?.filterIsInstance<de.haumacher.kotlinjt.lsg.TypedLsgElement>()?.map { it.objectId }?.toSet().orEmpty()
+
         /** The nearest LOD/Range-LOD ancestor of a node — the "part" grouping key. */
         fun lodAncestor(nodeId: Int): Int? {
-            val lodNodes =
-                lsg?.graphElements?.filter { it is LodNodeElement || it is RangeLodNodeElement }
-                    ?.filterIsInstance<de.haumacher.kotlinjt.lsg.TypedLsgElement>()?.map { it.objectId }?.toSet().orEmpty()
             var current = parentOf[nodeId]
             var guard = 0
             while (current != null && guard++ < 64) {
@@ -101,6 +122,42 @@ class SceneFixtureTest {
             }
             return null
         }
+
+        /**
+         * The shape nodes of one LOD node's tiers, in the LSG's own child order: one list per
+         * tier (alternative representation), and position *j* within a tier is the shape slot
+         * the scene turns into one node.
+         */
+        fun tiersOf(lodNodeId: Int): List<List<Int>> {
+            fun shapesUnder(
+                id: Int,
+                depth: Int,
+            ): List<Int> {
+                val node = nodesById[id] ?: return emptyList()
+                if (node is ShapeNodeElement) return listOf(id)
+                if (depth > 16) return emptyList()
+                // A nested LOD node contributes only its finest alternative (as the scene does).
+                val children = if (id in lodNodes) node.childObjectIds.take(1) else node.childObjectIds
+                return children.flatMap { shapesUnder(it, depth + 1) }
+            }
+            return nodesById[lodNodeId]?.childObjectIds?.map { shapesUnder(it, 0) }.orEmpty()
+        }
+    }
+
+    /** Every node that is named or has a named ancestor — i.e. that a consumer can locate. */
+    private fun namedNodes(root: SceneNode): Set<SceneNode> {
+        val located = java.util.Collections.newSetFromMap(IdentityHashMap<SceneNode, Boolean>())
+
+        fun walk(
+            node: SceneNode,
+            underName: Boolean,
+        ) {
+            val here = underName || node.name.isNotEmpty()
+            if (here) located.add(node)
+            node.children.forEach { walk(it, here) }
+        }
+        walk(root, false)
+        return located
     }
 
     /** All scene nodes, deduplicated by identity (instanced subtrees are shared objects). */
@@ -188,40 +245,74 @@ class SceneFixtureTest {
                     assertEquals(triBodies, meshes.size, "each decoded tri-strip body is one scene mesh")
                     assertEquals(polyBodies, polylineSets.size, "each decoded polyline body is one scene polyline set")
                 },
-                // spec: §13.9 (LSG Part Structure — parts collapse to named nodes, one mesh per tier)
-                dynamicTest("geometry-bearing nodes are named and carry one entry per decoded LOD tier") {
+                // spec: §13.9 (LSG Part Structure — one scene node per shape, one entry per tier)
+                dynamicTest("geometry-bearing nodes are locatable and carry one entry per decoded LOD tier") {
                     val file = JtFile.parse(bytes)
                     val view = Layer1View(file)
                     assumeTrue(view.lsg != null, "no decodable LSG")
-                    // Expected tier counts per part (= LOD ancestor), split by geometry kind.
-                    val triTiers = mutableMapOf<Int, Int>()
-                    val polyTiers = mutableMapOf<Int, Int>()
-                    for (segment in file.shapeLodSegments()) {
-                        val nodeId = view.shapeNodeBySegment[segment.tocEntry.segmentId] ?: continue
-                        val ancestor = view.lodAncestor(nodeId) ?: continue
-                        val document = file.decodeShapeLod(segment)?.document ?: continue
-                        if (document.triStripGeometry != null) triTiers.merge(ancestor, 1, Int::plus)
-                        if (document.polylineGeometry != null) polyTiers.merge(ancestor, 1, Int::plus)
+                    // Expected shape slots: for every LOD node, position j across its tiers is
+                    // one body, and that body's entry count is the number of tiers in which it
+                    // decoded. Computed from the LSG's own child order plus the decoded bodies.
+                    val decodedBySegment =
+                        file.shapeLodSegments().associate { segment ->
+                            val document = file.decodeShapeLod(segment)?.document
+                            segment.tocEntry.segmentId to Pair(document?.triStripGeometry != null, document?.polylineGeometry != null)
+                        }
+
+                    fun kindsOf(shapeNodeId: Int): Pair<Int, Int> {
+                        var tri = 0
+                        var poly = 0
+                        for (segmentId in view.segmentsByShapeNode[shapeNodeId].orEmpty()) {
+                            val decoded = decodedBySegment[segmentId] ?: continue
+                            if (decoded.first) tri++
+                            if (decoded.second) poly++
+                        }
+                        return tri to poly
                     }
-                    assumeTrue(triTiers.isNotEmpty() || polyTiers.isNotEmpty(), "no LOD-grouped geometry in this fixture")
+
+                    val expectedMeshCounts = mutableListOf<Int>()
+                    val expectedPolyCounts = mutableListOf<Int>()
+                    for (lodNodeId in view.lodNodes) {
+                        val tiers = view.tiersOf(lodNodeId)
+                        val slots = tiers.maxOfOrNull { it.size } ?: 0
+                        for (slot in 0 until slots) {
+                            var meshes = 0
+                            var polylines = 0
+                            for (tier in tiers) {
+                                val shapeId = tier.getOrNull(slot) ?: continue
+                                val (tri, poly) = kindsOf(shapeId)
+                                meshes += tri
+                                polylines += poly
+                            }
+                            if (meshes > 0) expectedMeshCounts.add(meshes)
+                            if (polylines > 0) expectedPolyCounts.add(polylines)
+                        }
+                    }
+                    assumeTrue(
+                        expectedMeshCounts.isNotEmpty() || expectedPolyCounts.isNotEmpty(),
+                        "no LOD-grouped geometry in this fixture",
+                    )
                     val scene = file.readScene()
                     val nodes = uniqueNodes(scene.root)
                     val meshBearing = nodes.filter { it.meshes.isNotEmpty() }
                     val polyBearing = nodes.filter { it.polylines.isNotEmpty() }
-                    assertEquals(triTiers.size, meshBearing.size, "one mesh-bearing scene node per part")
-                    assertEquals(polyTiers.size, polyBearing.size, "one polyline-bearing scene node per part")
+                    assertEquals(expectedMeshCounts.size, meshBearing.size, "one mesh-bearing scene node per shape slot")
+                    assertEquals(expectedPolyCounts.size, polyBearing.size, "one polyline-bearing scene node per shape slot")
+                    // A body the file leaves unnamed stays unnamed — but it must be locatable:
+                    // the part it belongs to is named, and it hangs under that name.
+                    val named = namedNodes(scene.root)
                     for (node in meshBearing + polyBearing) {
-                        assertTrue(node.name.isNotEmpty(), "a geometry-bearing node without a name")
+                        assertTrue(node in named, "a geometry-bearing node with no named node on its path")
                     }
                     assertEquals(
-                        triTiers.values.sorted(),
+                        expectedMeshCounts.sorted(),
                         meshBearing.map { it.meshes.size }.sorted(),
-                        "meshes per node must match the parts' decoded tier counts",
+                        "meshes per node must match each body's decoded tier count",
                     )
                     assertEquals(
-                        polyTiers.values.sorted(),
+                        expectedPolyCounts.sorted(),
                         polyBearing.map { it.polylines.size }.sorted(),
-                        "polyline sets per node must match the parts' decoded tier counts",
+                        "polyline sets per node must match each body's decoded tier count",
                     )
                     // Tier order: finest first — triangle counts strictly descend.
                     for (node in meshBearing) {

@@ -76,7 +76,10 @@ internal class AuthoredLsg(
  *    nodes: it would come back on an extra unnamed child);
  * 2. a child node that the collapse would splice out or absorb — an unnamed child with an
  *    identity transform, no material and no geometry (spliced), or a *sole* unnamed child with
- *    an identity transform (absorbed into its parent).
+ *    an identity transform (absorbed into its parent);
+ * 3. a node carrying meshes **and** polyline sets: the scene is one node per body (issue #13),
+ *    and a tier holding a tri-strip shape next to a polyline shape reads back as two sibling
+ *    nodes, not as one node holding both.
  *
  * Both refusals name the offending path. Lifting them needs a Layer 2 read-side rule, not a
  * writer change — recorded in DESIGN.md's deferral table.
@@ -177,6 +180,13 @@ internal class LsgAuthor(
             throw JtWriteException(
                 "$path: a node carrying geometry and children is not representable in the §13.9 part " +
                     "convention this writer emits — move the geometry into a named child node",
+            )
+        }
+        if (node.meshes.isNotEmpty() && node.polylines.isNotEmpty()) {
+            throw JtWriteException(
+                "$path: a node carrying both meshes and polyline sets is not a single body — the scene " +
+                    "reads back with one node per body (issue #13), so this would return as two sibling " +
+                    "nodes; give the mesh and the wireframe a node each",
             )
         }
         if (node.meshes.size > MAX_LOD_TIERS || node.polylines.size > MAX_LOD_TIERS) {
