@@ -269,12 +269,13 @@ vertex/polygon count ranges. An independent open-source JT reader (OpenCASCADE's
 consulted to disambiguate field order where both spec generations' figures are garbled; all
 its claims were re-verified against the fixture bytes before adoption.
 
-**The v10 wire formats are deliberately not implemented here.** v10's Int32CDP (Figure 132:
-no symbol field, 7-bit value widths, Move-to-Front codec), its bitlength variant (Annex B's
-nibbler-based block scheme), its packed Deering code array and its shape element bodies
-differ from the JT 9 generation enough that implementing them unverifiable would be
-guessing. Until the v10 shape-body package establishes them, v10 shape elements are carried
-opaquely with `ELEMENT_LAYOUT_UNVERIFIED`. **Correction (issue #5)**: this section
+~~**The v10 wire formats are deliberately not implemented here.**~~ (Resolved by issue #6 —
+see *Layer 1: v10 shape LOD bodies* below; the deferral's reasoning stands as written:) v10's
+Int32CDP (Figure 132: no symbol field, 7-bit value widths, Move-to-Front codec), its
+bitlength variant (Annex B's nibbler-based block scheme), its packed Deering code array and
+its shape element bodies differ from the JT 9 generation enough that implementing them
+unverifiable would be guessing. Until the v10 shape-body package establishes them, v10 shape
+elements are carried opaquely with `ELEMENT_LAYOUT_UNVERIFIED`. **Correction (issue #5)**: this section
 originally justified the deferral with *"every v10 shape body in reach (all 39 NIST
 segments) sits behind segment-wide LZMA, so no v10 layout can be established or even
 exercised; their time comes with the LZMA package, which makes the NIST bodies readable"* —
@@ -364,6 +365,103 @@ exact byte consumption pin each layout — a one-byte deviation breaks both).
 22. **A shape may store one more vertex attribute record than the masks reference** (one
     fixture body: 204 stored, 203 referenced); tolerated — the extra record stays in the
     model and re-encodes, it is just never referenced by a triangle corner.
+
+## Layer 1: v10 shape LOD bodies (issue #6)
+
+**Scope and grounding.** The v10 generation of the shape pipeline, established against the
+NIST fixture's 39 shape LOD bodies (24 tri-strip + 15 polyline, 13 each per LOD tier) and
+the v10 reference (§7, §12, Annex B reference source, Annex D). The condition of the issue-#4
+deferral was met (the NIST bodies were plain bytes all along, and since issue #5 the decoded
+LSG cross-checks them); every wire structure below was verified three ways before the Kotlin
+code was written: exact byte consumption on all 39 bodies, every stored hash (24 composite +
+24 coordinate + 24 normal hashes on the tri-strips; 15 FGPV + 15 unique-length + 15
+coordinate hashes on the polylines — 117 in total), and the cross-model battery against the
+LSG's declared count ranges.
+
+**Mechanism — how the generations share code without contaminating each other.** The JT 9
+wire readers are untouched; the v10 generation gets parallel *readers* (`Int32Cdp.readV10`,
+`CompressedVertex*Array.readV10`, the v10 element body functions) dispatched by
+`LsgGeneration` at the element-codec table, while the *model types* are shared wherever the
+wire is generation-invariant (packet classes, vertex arrays, vertex records) and split where
+it is not (`TopologicallyCompressedRepDataV10`, the v10 element classes). Because every wire
+field is preserved, `encode` stays a single generation-free projection — the packet knows its
+own shape; only decoding needs to know the generation. Genuinely identical logic is shared,
+not duplicated: the 16-bit arithmetic decoder core (both context generations project to one
+entry form), the Annex D topology decoder (unchanged), the Deering angle-to-vector math, the
+Jenkins hashes, and the triangle-extraction core (`buildTrianglesFromTopology` — the JT 9 and
+v10 paths differ only in how the 8th mask context's 64-bit masks are chunked). Files
+declaring 10.0–10.4 use the same v10 path; where a 10.0 producer deviates, the strict
+checks refuse to opaque-with-note rather than misread.
+
+**What the fixture's bodies actually use** (and therefore what is fixture-verified): CODEC
+types 1 (bitlength, 696 packets — both modes), 3 (arithmetic, 436), 4 (chopper, 67), 5
+(move-to-front, 94) and the empty packet (147); quantized coordinates (LOD1/2, 9–17 bits)
+and lossless binary-float coordinates (LOD0); packed Deering normals (LOD1/2, 3 and 6 bits
+per angle) and lossless binary normals (LOD0); per-vertex flag arrays (all tri-strips bind
+Table 48 bit 7). The null CODEC never occurs in v10 wire (implemented, spec-derived — its
+layout is Figure-132-fixed and identical to the fixture-verified JT 9 form). Point set,
+polygon set and primitive set bodies remain refuse-with-note: no fixture carries one.
+
+## v10 shape wire format as NX 10.5 writes it (established, with byte evidence from the NIST fixture)
+
+Continuing the delta numbering. Unlike the LSG deltas 23–26, most of these are cases where
+the 10.0 reference is silent or its prose contradicts its own figures — with no 10.0 fixture
+at hand, "10.5 delta vs. 10.0 documentation gap" cannot be distinguished, and each entry says
+which reading the evidence supports.
+
+27. **Vertex Shape LOD Data wraps its TopoMesh collection in a nested Logical Element
+    Header whose type GUIDs are absent from Annex A.** Figure 85 does show the header box
+    (so the structure is 10.0-documented); the values are not: all 24 tri-strip bodies carry
+    `{F830A5AD-BE4C-4FBC-9B5F-B9269278D2E1}` (TopoMesh Topologically Compressed LOD Data),
+    all 15 polyline bodies `{11C12D32-38F9-45BA-93BA-66F9D538DDFB}` (TopoMesh Compressed LOD
+    Data), both with Object Base Type 9 ("JtBase", Table 7). The I32 Element Length spans
+    GUID + base type + object id + payload — everything after itself except the outer
+    element's trailing U8 version (verified on all 39 bodies; validated at decode, preserved
+    verbatim in the model).
+28. **The arithmetic out-of-band packet is on the wire exactly when the probability context
+    carries an escape entry.** Figure 132 shows the field unconditionally. Evidence: every
+    escapeless context (e.g. all packed-Deering packets) is followed directly by the next
+    wire field — shape14's Deering context ends at body offset 1669 where the stored normal
+    hash begins; reading a nested packet there yields garbage — while all contexts with an
+    escape entry are followed by a well-formed nested packet whose values the escape symbols
+    consume exactly.
+29. **Lossless vertex arrays hash whole component arrays, not per-value.** The §12.1.3 and
+    §12.1.4 pseudo-code calls `hash32(&value, 1, uHash)` per element; the bytes disagree:
+    all 8 lossless LOD0 bodies' coordinate and normal hashes verify only as
+    `hash32(componentArray, n, uHash)` chained over the three components (the two formulas
+    differ because the hash mixes the array length in). The quantized paths hash per
+    component array in both text and bytes.
+30. **Binary Vertex Normals use the NULL predictor.** The §12.1.4 prose says the float bits
+    are "fed directly into the Lag1 predictor"; Figure 139 shows no predictor annotation.
+    The bytes side with the figure: under NULL all 5 006 normals of the largest LOD0 body
+    are unit vectors and the stored hash verifies; under Lag1, 4 939 of them are not even
+    unit length. (Binary Vertex *Coords* do use Lag1, as both prose and figure say.)
+31. **The Move-to-Front wire form** (§12.1.1 prose describes the idea, not the encoding):
+    a nested Window Values packet then a Window Offsets packet; offset **−1 is the escape**
+    pulling the next window value; the recency window holds 16 entries, both new values and
+    cache hits move to the *front*, eviction is from the back. Evidence: 94 MTF packets (the
+    vertex-group stream of every tri-strip body) whose decoded output feeds the verified
+    composite hashes.
+
+Recorded observations from the same evidence:
+
+- **Figure 92 is byte-accurate for v10**: the 8th attribute-mask context stores 32 + 32 bits
+  (one LSB packet plus the MSB packet) and the composite hash covers them as two 32-bit
+  arrays — confirming that the 30/30/4 chunking really was a JT 9 generation delta (delta
+  20), not a spec error.
+- **NX's LSG-declared polygon counts are upper bounds, not exact**: every NIST tri-strip
+  LOD decodes fewer triangles than its shape node declares (e.g. 4 010 decoded vs. 4 922
+  declared) — consistent with NX counting the degenerate triangles of its original strip
+  form; the NetAllied 9.5 fixture declares exact counts. The declared *vertex* counts are
+  per-corner counts: exactly the polyline vertex-list lengths (all 15 polyline LODs match
+  to the digit), an upper bound on unique tri-strip coordinates. The fixture battery
+  asserts each generation's actual truth.
+- **LOD tiers descend strictly** in the NIST fixture: all 26 tier boundaries of its 13
+  parts have strictly fewer primitives (triangles / polyline corners) than the tier above.
+- The v10 `Quantization Parameters` normal-bits factor equals the normal array's own
+  per-angle bit count in all 39 bodies (`BitsPerNormal = 6 + 2·factor` = the packed code
+  width) — no v10 counterpart of the JT 9 discrepancy recorded in delta 21; the array's own
+  field remains authoritative in the decoder.
 
 ## LZMA decoding (issue #5)
 
@@ -458,9 +556,9 @@ declared type) pass cross-producer for the first time.
   JSON — including per-payload SHA-256 and the LSG element histogram — equal to the sidecar
   `<name>.expected.json` (created on first run for human review, asserted thereafter);
   byte-identical re-serialization; LSG element-stream round-trip; the model-level mutation
-  probe (skipping visibly where a stage is not applicable — since issue #5 both committed
-  fixtures run the full LSG battery; NIST still skips the tri-strip geometry stage, whose
-  v10 bodies await the v10 shape-body package).
+  probe (skipping visibly where a stage is not applicable — since issue #6 both fixtures run
+  the full battery including the shape-geometry stage; the LOD-descent stage skips visibly
+  on the 9.5 file, whose segments are all one tier).
 - No fixtures ⇒ one visibly **SKIPPED** test whose name carries the count. Verified.
 - Committed code never names a fixture file (customer part numbers). Sidecars live next to
   the fixtures, equally gitignored.
@@ -472,11 +570,11 @@ declared type) pass cross-producer for the first time.
 
 | What | Its time comes when |
 |---|---|
-| v10 shape element bodies + v10 Int32CDP/Int64CDP wire formats (Figures 132–137), v10 bitlength/packed-Deering variants | **condition met** (corrected — see the issue #4 correction above): the NIST bodies were plain bytes all along, and since issue #5 the decoded LSG cross-checks them (declared count ranges, late-loaded references) — next decoding package (until then: opaque with `ELEMENT_LAYOUT_UNVERIFIED`) |
+| ~~v10 shape element bodies + v10 Int32CDP wire formats, v10 bitlength/packed-Deering variants~~ | **done** (issue #6, see *Layer 1: v10 shape LOD bodies*): tri-strip + polyline bodies decode typed in v10, all 117 stored hashes verified; Int64CDP (Figures 135–137) stays deferred — no §7 structure needs it, first consumer is B-rep/curve data |
 | XZ SHA-256 block-check verification, non-LZMA2 xz filter chains | first real stream carrying them (today: SHA-256 decodes unverified; foreign filter chains refuse with `UNSUPPORTED_COMPRESSION`) |
 | LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than stored/ZLIB permits (issue #1 policy: simplest legal encodings) |
-| Polyline/Point/Polygon/Primitive Set Shape LOD bodies (TopoMesh Compressed Rep Data V1/V2, lossless/lossy primitive set data) | first fixture carrying them (all fixture shape segments are tri-strip) |
-| Vertex colours, texture coordinates, per-vertex flags and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today) |
+| Point/Polygon/Primitive Set Shape LOD bodies; Polyline Set in the JT 9 generation | first fixture carrying them (the NIST polylines settled the v10 Polyline layout — issue #6; no fixture shows the others) |
+| Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
 | Element body parsing for meta data / PMI segments | the §11 package (LSG done issue #3, shape LOD done issue #4) |
 | v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |
 | Property-table *semantics* (units, key naming conventions, §13.8) | Layer 2 scene façade (raw carrying is done) |

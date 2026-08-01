@@ -223,6 +223,144 @@ class VertexArrayTest {
         assertContentEquals(bytes, writer.toByteArray())
     }
 
+    // spec: Figure 138
+    @Test
+    fun v10LosslessCoordinateArrayStoresBinaryFloatsPerComponent() {
+        // v10 lossless path: ONE binary-float packet per component (Lag1), hashed per whole
+        // component array — not per value (DESIGN.md delta 29).
+        val vertices = listOf(Vec3F32(1.5f, -2.25f, 3.75f), Vec3F32(0.5f, 8f, -1f))
+        var hash = 0
+        for (component in 0 until 3) {
+            val bits = IntArray(vertices.size) { componentOf(vertices[it], component).toRawBits() }
+            hash = JtHash.hash32(bits, hash)
+        }
+        val bytes =
+            bytesOf {
+                writeI32(vertices.size)
+                writeU8(3u)
+                repeat(3) {
+                    writeF32(0f)
+                    writeF32(0f)
+                    writeU8(0u)
+                }
+                for (component in 0 until 3) {
+                    writeNullCdp(vertices.map { componentOf(it, component).toRawBits() })
+                }
+                writeI32(hash)
+            }
+        val array = CompressedVertexCoordinateArray.readV10(ByteReader(bytes, Endianness.LITTLE_ENDIAN))
+        assertEquals(vertices, array.coordinates)
+        assertTrue(array.isLossless)
+        val writer = ByteWriter(Endianness.LITTLE_ENDIAN)
+        array.write(writer)
+        assertContentEquals(bytes, writer.toByteArray())
+    }
+
+    // spec: Figure 139
+    @Test
+    fun v10QuantizedNormalArrayUnpacksPackedDeeringCodes() {
+        // v10 quantized normals: one packet of packed codes [sextant:3][octant:3][theta:n][psi:n]
+        // (Annex B unpackCode), NULL predictor, hashed as one array.
+        val quantBits = 8
+        val quads = listOf(listOf(0, 7, 10, 20), listOf(3, 5, 100, 200), listOf(5, 1, 255, 0))
+        val codes =
+            quads.map { (s, o, t, p) ->
+                (s shl (2 * quantBits + 3)) or (o shl (2 * quantBits)) or (t shl quantBits) or p
+            }
+        val hash = JtHash.hash32(codes.toIntArray(), 0)
+        val bytes =
+            bytesOf {
+                writeI32(codes.size)
+                writeU8(3u)
+                writeU8(quantBits.toUByte())
+                writeNullCdp(codes)
+                writeI32(hash)
+            }
+        val array = CompressedVertexNormalArray.readV10(ByteReader(bytes, Endianness.LITTLE_ENDIAN))
+        assertEquals(3, array.normals.size)
+        for ((i, quad) in quads.withIndex()) {
+            val expected = deeringCodeToVector(quad[0], quad[1], quad[2], quad[3], quantBits)
+            assertEquals(expected, array.normals[i], "packed code $i must unpack to the reference quadruple")
+            val n = array.normals[i]
+            assertTrue(abs(sqrt(n.x * n.x + n.y * n.y + n.z * n.z) - 1f) < 1e-3, "non-unit normal $n")
+        }
+        val writer = ByteWriter(Endianness.LITTLE_ENDIAN)
+        array.write(writer)
+        assertContentEquals(bytes, writer.toByteArray())
+    }
+
+    // spec: Figure 139
+    @Test
+    fun v10LosslessNormalArrayUsesTheNullPredictor() {
+        // The §12.1.4 prose names Lag1 but the bytes use NULL (DESIGN.md delta 30): the
+        // stored words ARE the float bits, so a vector needing Lag1 would decode wrong.
+        val normals = listOf(Vec3F32(0f, 0f, 1f), Vec3F32(1f, 0f, 0f), Vec3F32(0f, -1f, 0f), Vec3F32(0f, 0f, -1f), Vec3F32(0f, 1f, 0f))
+        var hash = 0
+        for (component in 0 until 3) {
+            hash = JtHash.hash32(IntArray(normals.size) { componentOf(normals[it], component).toRawBits() }, hash)
+        }
+        val bytes =
+            bytesOf {
+                writeI32(normals.size)
+                writeU8(3u)
+                writeU8(0u)
+                for (component in 0 until 3) {
+                    writeNullCdp(normals.map { componentOf(it, component).toRawBits() })
+                }
+                writeI32(hash)
+            }
+        val array = CompressedVertexNormalArray.readV10(ByteReader(bytes, Endianness.LITTLE_ENDIAN))
+        assertEquals(normals, array.normals)
+        val writer = ByteWriter(Endianness.LITTLE_ENDIAN)
+        array.write(writer)
+        assertContentEquals(bytes, writer.toByteArray())
+    }
+
+    // spec: Figure 142
+    @Test
+    fun vertexFlagArrayRoundTripsAndValidatesTheCount() {
+        val flags = listOf(0, 1, 1, 0, 1)
+        val bytes =
+            bytesOf {
+                writeU32(flags.size.toUInt())
+                writeNullCdp(flags)
+            }
+        val array = CompressedVertexFlagArray.read(ByteReader(bytes, Endianness.LITTLE_ENDIAN))
+        assertEquals(flags, array.flags)
+        val writer = ByteWriter(Endianness.LITTLE_ENDIAN)
+        array.write(writer)
+        assertContentEquals(bytes, writer.toByteArray())
+
+        val mismatch =
+            bytesOf {
+                writeU32(7u) // declares 7 flags, the packet carries 5
+                writeNullCdp(flags)
+            }
+        assertFailsWith<JtFormatException> {
+            CompressedVertexFlagArray.read(ByteReader(mismatch, Endianness.LITTLE_ENDIAN))
+        }
+    }
+
+    // spec: Figure 138
+    @Test
+    fun v10CoordinateHashMismatchRefusesTheDecode() {
+        val bytes =
+            bytesOf {
+                writeI32(1)
+                writeU8(3u)
+                repeat(3) {
+                    writeF32(0f)
+                    writeF32(0f)
+                    writeU8(0u)
+                }
+                repeat(3) { writeNullCdp(listOf(1f.toRawBits())) }
+                writeI32(12345) // wrong hash
+            }
+        assertFailsWith<JtFormatException> {
+            CompressedVertexCoordinateArray.readV10(ByteReader(bytes, Endianness.LITTLE_ENDIAN))
+        }
+    }
+
     private fun componentOf(
         v: Vec3F32,
         component: Int,

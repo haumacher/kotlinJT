@@ -40,7 +40,11 @@ data class ShapeLodDocument(
 ) {
     /** The tri-strip geometry of this LOD, `null` when no tri-strip element decoded typed. */
     val triStripGeometry: TriStripGeometry?
-        get() = elements.filterIsInstance<TriStripSetShapeLodElement>().firstOrNull()?.geometry
+        get() = elements.filterIsInstance<TriStripGeometryCarrier>().firstOrNull()?.geometry
+
+    /** The polyline geometry of this LOD, `null` when no polyline element decoded typed. */
+    val polylineGeometry: PolylineGeometry?
+        get() = elements.filterIsInstance<PolylineSetShapeLodElementV10>().firstOrNull()?.geometry
 
     /** Serializes the document back to element-stream bytes — the exact inverse of [decode]. */
     fun encode(order: Endianness): Bytes {
@@ -174,17 +178,24 @@ private fun decodeShapeElementBody(
         notes.add(LoadNote.UnknownElementType(typeId, location))
         return opaque()
     }
-    // The v10 generation's shape element bodies are hidden behind LZMA in every available
-    // v10 file; their layouts are established together with that codec — never guessed here.
+    // Wire layouts established per generation: the JT 9 layouts against the 9.5 fixture,
+    // the v10 layouts against the NIST 10.5 fixture (DESIGN.md). Everything else is carried
+    // opaquely — never guessed.
     val decoder: ((ByteReader) -> TypedShapeLodElement)? =
-        if (generation == LsgGeneration.V9) {
-            when (typeId) {
-                ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT -> ::readTriStripSetShapeLod
-                ObjectTypeIds.NULL_SHAPE_LOD_ELEMENT -> ::readNullShapeLod
-                else -> null
-            }
-        } else {
-            null
+        when (generation) {
+            LsgGeneration.V9 ->
+                when (typeId) {
+                    ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT -> ::readTriStripSetShapeLod
+                    ObjectTypeIds.NULL_SHAPE_LOD_ELEMENT -> ::readNullShapeLod
+                    else -> null
+                }
+            LsgGeneration.V10, LsgGeneration.V10_5 ->
+                when (typeId) {
+                    ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT -> ::readTriStripSetShapeLodV10
+                    ObjectTypeIds.POLYLINE_SET_SHAPE_LOD_ELEMENT -> ::readPolylineSetShapeLodV10
+                    ObjectTypeIds.NULL_SHAPE_LOD_ELEMENT -> ::readNullShapeLodV10
+                    else -> null
+                }
         }
     if (decoder == null) {
         notes.add(LoadNote.ElementLayoutUnverified(typeId, typeName, generation.name, location))
@@ -211,11 +222,19 @@ internal fun encodeShapeElementFrame(
     val bodyWriter = ByteWriter(w.order)
     when (element) {
         is OpaqueShapeLodElement -> bodyWriter.writeBytes(element.body)
-        is TriStripSetShapeLodElement -> writeTriStripSetShapeLod(bodyWriter, element)
-        is NullShapeLodElement -> writeNullShapeLod(bodyWriter, element)
-    }
-    check(generation == LsgGeneration.V9 || element is OpaqueShapeLodElement) {
-        "typed shape LOD elements encode in the JT 9 generation only"
+        is TriStripSetShapeLodElement -> {
+            check(generation == LsgGeneration.V9) { "JT 9 tri-strip element in a $generation document" }
+            writeTriStripSetShapeLod(bodyWriter, element)
+        }
+        is TriStripSetShapeLodElementV10 -> {
+            check(generation != LsgGeneration.V9) { "v10 tri-strip element in a JT 9 document" }
+            writeTriStripSetShapeLodV10(bodyWriter, element)
+        }
+        is PolylineSetShapeLodElementV10 -> {
+            check(generation != LsgGeneration.V9) { "v10 polyline element in a JT 9 document" }
+            writePolylineSetShapeLodV10(bodyWriter, element)
+        }
+        is NullShapeLodElement -> writeNullShapeLod(bodyWriter, element, generation)
     }
     val body = bodyWriter.toByteArray()
     w.writeI32(16 + body.size)
@@ -238,13 +257,24 @@ private fun readNullShapeLod(r: ByteReader): NullShapeLodElement {
     return NullShapeLodElement(objectId, r.readI16().toInt(), r.readBBoxF32())
 }
 
+/** The v10 layout (Figure 94: U8 version). Spec-derived; no fixture carries one. */
+private fun readNullShapeLodV10(r: ByteReader): NullShapeLodElement {
+    val objectId = readElementHeader(r)
+    return NullShapeLodElement(objectId, r.readU8().toInt(), r.readBBoxF32())
+}
+
 private fun writeNullShapeLod(
     w: ByteWriter,
     element: NullShapeLodElement,
+    generation: LsgGeneration,
 ) {
     w.writeU8(BASE_TYPE_SHAPE_LOD.toUByte())
     w.writeI32(element.objectId)
-    w.writeI16(element.version.toShort())
+    if (generation == LsgGeneration.V9) {
+        w.writeI16(element.version.toShort())
+    } else {
+        w.writeU8(element.version.toUByte())
+    }
     w.writeBBoxF32(element.untransformedBBox)
 }
 
@@ -413,6 +443,300 @@ private fun writeTopologicallyCompressedVertexRecords(
     w.writeI32(records.numberOfVertexAttributes ?: 0)
     records.coordinates?.write(w)
     records.normals?.write(w)
+    records.vertexFlags?.write(w)
+}
+
+// --- v10 element bodies (wire layouts NIST-10.5-verified; DESIGN.md) ---
+
+private fun readNestedElementHeader(r: ByteReader): NestedElementHeader {
+    val elementLength = r.readI32()
+    // The nested element spans from its Object Type ID to the end of the rep data; the
+    // outer element's trailing U8 version is the only byte after it.
+    val expected = r.remaining - 1
+    if (elementLength != expected) {
+        throw JtFormatException("nested element length $elementLength does not span the remaining body ($expected)")
+    }
+    return NestedElementHeader(elementLength, r.readGuid(), r.readU8().toInt(), r.readI32())
+}
+
+private fun writeNestedElementHeader(
+    w: ByteWriter,
+    header: NestedElementHeader,
+) {
+    w.writeI32(header.elementLength)
+    w.writeGuid(header.objectTypeId)
+    w.writeU8(header.objectBaseType.toUByte())
+    w.writeI32(header.objectId)
+}
+
+private fun readTriStripSetShapeLodV10(r: ByteReader): TriStripSetShapeLodElementV10 {
+    val objectId = readElementHeader(r)
+    val baseShapeLodVersion = r.readU8().toInt()
+    val vertexShapeLodVersion = r.readU8().toInt()
+    val bindings = r.readU64()
+    val nestedHeader = readNestedElementHeader(r)
+    val topoMesh = TopoMeshLodData(r.readU8().toInt(), r.readI32())
+    val topoVersion = r.readU8().toInt()
+    val repData = readTopologicallyCompressedRepDataV10(r)
+    val version = r.readU8().toInt()
+    val geometry = buildTriStripGeometryV10(repData)
+    return TriStripSetShapeLodElementV10(
+        objectId, baseShapeLodVersion, vertexShapeLodVersion, bindings, nestedHeader,
+        topoMesh, topoVersion, repData, version, geometry,
+    )
+}
+
+private fun writeTriStripSetShapeLodV10(
+    w: ByteWriter,
+    element: TriStripSetShapeLodElementV10,
+) {
+    w.writeU8(BASE_TYPE_SHAPE_LOD.toUByte())
+    w.writeI32(element.objectId)
+    w.writeU8(element.baseShapeLodVersion.toUByte())
+    w.writeU8(element.vertexShapeLodVersion.toUByte())
+    w.writeU64(element.vertexBindings)
+    writeNestedElementHeader(w, element.nestedHeader)
+    w.writeU8(element.topoMesh.version.toUByte())
+    w.writeI32(element.topoMesh.vertexRecordsObjectId)
+    w.writeU8(element.topologicallyCompressedVersion.toUByte())
+    writeTopologicallyCompressedRepDataV10(w, element.repData)
+    w.writeU8(element.version.toUByte())
+}
+
+private fun readTopologicallyCompressedRepDataV10(r: ByteReader): TopologicallyCompressedRepDataV10 {
+    val faceDegreePackets = List(8) { Int32Cdp.readV10(r) }
+    val valencePacket = Int32Cdp.readV10(r)
+    val groupPacket = Int32Cdp.readV10(r)
+    val flagPacket = Int32Cdp.readV10(r)
+    val maskPackets = List(8) { Int32Cdp.readV10(r) }
+    val mask8Msb = Int32Cdp.readV10(r)
+    val highDegreeCount = r.readI32()
+    if (highDegreeCount < 0 || highDegreeCount > r.remaining / 4) {
+        throw JtFormatException("high-degree mask count $highDegreeCount does not fit the remaining ${r.remaining} bytes")
+    }
+    val highDegreeMasks = List(highDegreeCount) { r.readI32() }
+    val splitFacePacket = Int32Cdp.readV10(r)
+    val splitPositionPacket = Int32Cdp.readV10(r)
+    val storedHash = r.readI32()
+
+    val flags = unpackResiduals(flagPacket.values, Predictor.LAG1)
+    val splitFaces = unpackResiduals(splitFacePacket.values, Predictor.LAG1)
+
+    // Composite hash (Figure 92's pseudo-code): the v10 8th mask context hashes 32 LSBs then
+    // 32 MSBs (the JT 9 generation chunked 30/30/4 instead — DESIGN.md delta 20).
+    var hash = 0
+    for (packet in faceDegreePackets) hash = JtHash.hash32(packet.values.toIntArray(), hash)
+    hash = JtHash.hash32(valencePacket.values.toIntArray(), hash)
+    hash = JtHash.hash32(groupPacket.values.toIntArray(), hash)
+    hash = JtHash.hash16(IntArray(flags.size) { flags[it] and 0xFFFF }, hash)
+    for (i in 0 until 8) hash = JtHash.hash32(maskPackets[i].values.toIntArray(), hash)
+    hash = JtHash.hash32(mask8Msb.values.toIntArray(), hash)
+    hash = JtHash.hash32(highDegreeMasks.toIntArray(), hash)
+    hash = JtHash.hash32(splitFaces.toIntArray(), hash)
+    hash = JtHash.hash32(splitPositionPacket.values.toIntArray(), hash)
+    if (hash != storedHash) {
+        throw JtFormatException("topology composite hash mismatch: stored $storedHash, computed $hash")
+    }
+
+    val vertexRecords = readTopologicallyCompressedVertexRecordsV10(r)
+    return TopologicallyCompressedRepDataV10(
+        faceDegreePackets, valencePacket, groupPacket, flagPacket, maskPackets,
+        mask8Msb, highDegreeMasks, splitFacePacket, splitPositionPacket,
+        storedHash, vertexRecords,
+    )
+}
+
+private fun writeTopologicallyCompressedRepDataV10(
+    w: ByteWriter,
+    data: TopologicallyCompressedRepDataV10,
+) {
+    for (packet in data.faceDegrees) packet.encode(w)
+    data.vertexValences.encode(w)
+    data.vertexGroups.encode(w)
+    data.vertexFlags.encode(w)
+    for (packet in data.faceAttributeMasks) packet.encode(w)
+    data.faceAttributeMask8Msb.encode(w)
+    w.writeI32(data.highDegreeFaceAttributeMasks.size)
+    for (word in data.highDegreeFaceAttributeMasks) w.writeI32(word)
+    data.splitFaceSymbols.encode(w)
+    data.splitFacePositions.encode(w)
+    w.writeI32(data.compositeHash)
+    writeTopologicallyCompressedVertexRecords(w, data.vertexRecords)
+}
+
+/**
+ * Vertex Bindings bits (Table 48) the v10 decode supports: 2/3/4-component coordinates
+ * (bits 1-3), normals (bit 4) and per-vertex flags (bit 7). Colours, texture coordinates and
+ * auxiliary fields have no fixture — a shape declaring them refuses the typed decode.
+ */
+private val UNSUPPORTED_BINDING_MASK_V10: ULong = 0x4FUL.inv()
+
+private fun readTopologicallyCompressedVertexRecordsV10(r: ByteReader): TopologicallyCompressedVertexRecords {
+    val bindings = r.readU64()
+    val quantization =
+        QuantizationParameters(
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+        )
+    val topologicalVertexCount = r.readI32()
+    if (topologicalVertexCount < 0) throw JtFormatException("negative topological vertex count $topologicalVertexCount")
+    if (topologicalVertexCount == 0) {
+        return TopologicallyCompressedVertexRecords(bindings, quantization, 0, null, null, null, null)
+    }
+    val attributeCount = r.readI32()
+    if (bindings and UNSUPPORTED_BINDING_MASK_V10 != 0UL) {
+        throw JtFormatException(
+            "vertex bindings 0x${bindings.toString(16)} declare colours, texture coordinates or " +
+                "auxiliary fields; their v10 layout is not established",
+        )
+    }
+    val coordinates = if (bindings and 0x7UL != 0UL) CompressedVertexCoordinateArray.readV10(r) else null
+    val normals = if (bindings and 0x8UL != 0UL) CompressedVertexNormalArray.readV10(r) else null
+    val vertexFlags = if (bindings and 0x40UL != 0UL) CompressedVertexFlagArray.read(r) else null
+    if (coordinates != null && coordinates.uniqueVertexCount != topologicalVertexCount) {
+        throw JtFormatException(
+            "coordinate array carries ${coordinates.uniqueVertexCount} vertices, " +
+                "vertex records declare $topologicalVertexCount",
+        )
+    }
+    return TopologicallyCompressedVertexRecords(
+        bindings,
+        quantization,
+        topologicalVertexCount,
+        attributeCount,
+        coordinates,
+        normals,
+        vertexFlags,
+    )
+}
+
+private fun readPolylineSetShapeLodV10(r: ByteReader): PolylineSetShapeLodElementV10 {
+    val objectId = readElementHeader(r)
+    val baseShapeLodVersion = r.readU8().toInt()
+    val vertexShapeLodVersion = r.readU8().toInt()
+    val bindings = r.readU64()
+    val nestedHeader = readNestedElementHeader(r)
+    val topoMesh = TopoMeshLodData(r.readU8().toInt(), r.readI32())
+    val compressedLodVersion = r.readU8().toInt()
+    val repData = readTopoMeshCompressedRepData(r)
+    val version = r.readU8().toInt()
+    val geometry = buildPolylineGeometry(repData)
+    return PolylineSetShapeLodElementV10(
+        objectId, baseShapeLodVersion, vertexShapeLodVersion, bindings, nestedHeader,
+        topoMesh, compressedLodVersion, repData, version, geometry,
+    )
+}
+
+private fun writePolylineSetShapeLodV10(
+    w: ByteWriter,
+    element: PolylineSetShapeLodElementV10,
+) {
+    w.writeU8(BASE_TYPE_SHAPE_LOD.toUByte())
+    w.writeI32(element.objectId)
+    w.writeU8(element.baseShapeLodVersion.toUByte())
+    w.writeU8(element.vertexShapeLodVersion.toUByte())
+    w.writeU64(element.vertexBindings)
+    writeNestedElementHeader(w, element.nestedHeader)
+    w.writeU8(element.topoMesh.version.toUByte())
+    w.writeI32(element.topoMesh.vertexRecordsObjectId)
+    w.writeU8(element.compressedLodVersion.toUByte())
+    writeTopoMeshCompressedRepData(w, element.repData)
+    w.writeU8(element.version.toUByte())
+}
+
+private fun readTopoMeshCompressedRepData(r: ByteReader): TopoMeshCompressedRepData {
+    val faceGroupCount = r.readI32()
+    val primitiveCount = r.readI32()
+    val vertexCount = r.readI32()
+    if (faceGroupCount < 0 || primitiveCount < 0 || vertexCount < 0) {
+        throw JtFormatException("negative index count in TopoMesh Compressed Rep Data")
+    }
+    val (faceGroupPacket, faceGroups) = readInt32CdpValuesV10(r, Predictor.LAG1)
+    val (primitivePacket, primitives) = readInt32CdpValuesV10(r, Predictor.LAG1)
+    val (vertexPacket, vertexIndices) = readInt32CdpValuesV10(r, Predictor.LAG1)
+    // Figure 89's hash pseudo-code: the face group and primitive lists carry count + 1
+    // entries (the trailing terminator), the vertex list exactly count.
+    if (faceGroups.size != faceGroupCount + 1) {
+        throw JtFormatException("face group list carries ${faceGroups.size} indices, declared $faceGroupCount + 1")
+    }
+    if (primitives.size != primitiveCount + 1) {
+        throw JtFormatException("primitive list carries ${primitives.size} indices, declared $primitiveCount + 1")
+    }
+    if (vertexIndices.size != vertexCount) {
+        throw JtFormatException("vertex list carries ${vertexIndices.size} indices, declared $vertexCount")
+    }
+    val storedFgpvHash = r.readI32()
+    var hash = JtHash.hash32(faceGroups.toIntArray(), 0)
+    hash = JtHash.hash32(primitives.toIntArray(), hash)
+    hash = JtHash.hash32(vertexIndices.toIntArray(), hash)
+    if (hash != storedFgpvHash) {
+        throw JtFormatException("FGPV list indices hash mismatch: stored $storedFgpvHash, computed $hash")
+    }
+    val bindings = r.readU64()
+    val quantization =
+        QuantizationParameters(
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+            r.readU8().toInt(),
+        )
+    val recordCount = r.readI32()
+    if (recordCount < 0) throw JtFormatException("negative vertex record count $recordCount")
+    if (recordCount == 0) {
+        return TopoMeshCompressedRepData(
+            faceGroupCount, primitiveCount, vertexCount,
+            faceGroupPacket, primitivePacket, vertexPacket, storedFgpvHash,
+            bindings, quantization, 0, null, null, null, null, null,
+        )
+    }
+    val lengthsPacket = Int32Cdp.readV10(r)
+    val storedLengthsHash = r.readI32()
+    val lengthsHash = JtHash.hash32(lengthsPacket.values.toIntArray(), 0)
+    if (lengthsHash != storedLengthsHash) {
+        throw JtFormatException("unique vertex length list hash mismatch: stored $storedLengthsHash, computed $lengthsHash")
+    }
+    if (bindings and UNSUPPORTED_BINDING_MASK_V10 != 0UL) {
+        throw JtFormatException(
+            "vertex bindings 0x${bindings.toString(16)} declare colours, texture coordinates or " +
+                "auxiliary fields; their v10 layout is not established",
+        )
+    }
+    val coordinates = if (bindings and 0x7UL != 0UL) CompressedVertexCoordinateArray.readV10(r) else null
+    val normals = if (bindings and 0x8UL != 0UL) CompressedVertexNormalArray.readV10(r) else null
+    val vertexFlags = if (bindings and 0x40UL != 0UL) CompressedVertexFlagArray.read(r) else null
+    return TopoMeshCompressedRepData(
+        faceGroupCount, primitiveCount, vertexCount,
+        faceGroupPacket, primitivePacket, vertexPacket, storedFgpvHash,
+        bindings, quantization, recordCount, lengthsPacket, storedLengthsHash,
+        coordinates, normals, vertexFlags,
+    )
+}
+
+private fun writeTopoMeshCompressedRepData(
+    w: ByteWriter,
+    data: TopoMeshCompressedRepData,
+) {
+    w.writeI32(data.numberOfFaceGroupListIndices)
+    w.writeI32(data.numberOfPrimitiveListIndices)
+    w.writeI32(data.numberOfVertexListIndices)
+    data.faceGroupListIndices.encode(w)
+    data.primitiveListIndices.encode(w)
+    data.vertexListIndices.encode(w)
+    w.writeI32(data.fgpvListIndicesHash)
+    w.writeU64(data.vertexBindings)
+    w.writeU8(data.quantizationParameters.bitsPerVertex.toUByte())
+    w.writeU8(data.quantizationParameters.normalBitsFactor.toUByte())
+    w.writeU8(data.quantizationParameters.bitsPerTextureCoord.toUByte())
+    w.writeU8(data.quantizationParameters.bitsPerColour.toUByte())
+    w.writeI32(data.numberOfVertexRecords)
+    if (data.numberOfVertexRecords == 0) return
+    data.uniqueVertexLengths?.encode(w)
+    data.uniqueVertexListMapHash?.let { w.writeI32(it) }
+    data.coordinates?.write(w)
+    data.normals?.write(w)
+    data.vertexFlags?.write(w)
 }
 
 // --- geometry extraction ---
@@ -450,19 +774,84 @@ private fun buildTriStripGeometry(repData: TopologicallyCompressedRepData): TriS
                 }
             }
         }
+    return buildTrianglesFromTopology(
+        repData.faceDegrees.map { it.values },
+        valences,
+        groups,
+        flags,
+        masks,
+        repData.highDegreeFaceAttributeMasks,
+        unpackResiduals(repData.splitFaceSymbols.values, Predictor.LAG1),
+        repData.splitFacePositions.values,
+        repData.vertexRecords,
+    )
+}
+
+private fun buildTriStripGeometryV10(repData: TopologicallyCompressedRepDataV10): TriStripGeometry {
+    val valences = repData.vertexValences.values
+    val groups = repData.vertexGroups.values
+    val flags = unpackResiduals(repData.vertexFlags.values, Predictor.LAG1)
+    if (groups.size != valences.size || flags.size != valences.size) {
+        throw JtFormatException(
+            "vertex groups (${groups.size}) and flags (${flags.size}) are not parallel to the valences (${valences.size})",
+        )
+    }
+    val mask8Count = repData.faceAttributeMasks[7].valueCount
+    if (repData.faceAttributeMask8Msb.valueCount != 0 && repData.faceAttributeMask8Msb.valueCount != mask8Count) {
+        throw JtFormatException("face attribute mask MSB chunk is not parallel to context 8")
+    }
+    val masks =
+        List(8) { context ->
+            val low = repData.faceAttributeMasks[context].values
+            if (context < 7) {
+                low.map { it.toLong() and 0xFFFFFFFFL }
+            } else {
+                // v10 splits the 8th context's 64-bit masks into 32 + 32 bit chunks.
+                val msb = repData.faceAttributeMask8Msb.values
+                List(low.size) { i ->
+                    var mask = low[i].toLong() and 0xFFFFFFFFL
+                    if (i < msb.size) mask = mask or ((msb[i].toLong() and 0xFFFFFFFFL) shl 32)
+                    mask
+                }
+            }
+        }
+    return buildTrianglesFromTopology(
+        repData.faceDegrees.map { it.values },
+        valences,
+        groups,
+        flags,
+        masks,
+        repData.highDegreeFaceAttributeMasks,
+        unpackResiduals(repData.splitFaceSymbols.values, Predictor.LAG1),
+        repData.splitFacePositions.values,
+        repData.vertexRecords,
+    )
+}
+
+/** The generation-independent core: Annex D topology decode + triangle extraction. */
+private fun buildTrianglesFromTopology(
+    faceDegreeSymbols: List<List<Int>>,
+    valences: List<Int>,
+    groups: List<Int>,
+    flags: List<Int>,
+    masks: List<List<Long>>,
+    highDegreeMasks: List<Int>,
+    splitFaceSymbols: List<Int>,
+    splitFacePositions: List<Int>,
+    records: TopologicallyCompressedVertexRecords,
+): TriStripGeometry {
     val mesh =
         TopologyDecoder(
-            repData.faceDegrees.map { it.values },
+            faceDegreeSymbols,
             valences,
             groups,
             flags,
             masks,
-            repData.highDegreeFaceAttributeMasks,
-            unpackResiduals(repData.splitFaceSymbols.values, Predictor.LAG1),
-            repData.splitFacePositions.values,
+            highDegreeMasks,
+            splitFaceSymbols,
+            splitFacePositions,
         ).decode()
 
-    val records = repData.vertexRecords
     if (mesh.faces.size != records.numberOfTopologicalVertices) {
         throw JtFormatException(
             "topology decode produced ${mesh.faces.size} unique vertices, " +
@@ -517,4 +906,67 @@ private fun buildTriStripGeometry(repData: TopologicallyCompressedRepData): TriS
         )
     }
     return TriStripGeometry(vertices, normals, triangles)
+}
+
+/**
+ * Derives the polyline geometry from TopoMesh Compressed Rep Data: unique coordinates are
+ * smeared to vertex-record space via the unique-length list, the primitive list slices the
+ * vertex list into polylines, and the face group list assigns each polyline its group. All
+ * index structure is validated strictly — an inconsistency refuses the typed decode.
+ */
+private fun buildPolylineGeometry(repData: TopoMeshCompressedRepData): PolylineGeometry {
+    val faceGroups = unpackResiduals(repData.faceGroupListIndices.values, Predictor.LAG1)
+    val primitives = unpackResiduals(repData.primitiveListIndices.values, Predictor.LAG1)
+    val vertexIndices = unpackResiduals(repData.vertexListIndices.values, Predictor.LAG1)
+
+    val coordinates =
+        repData.coordinates?.coordinates
+            ?: throw JtFormatException("polyline set without vertex coordinates")
+    val lengths = repData.uniqueVertexLengths?.values ?: throw JtFormatException("polyline set without a unique vertex length list")
+    if (lengths.size != coordinates.size) {
+        throw JtFormatException("unique vertex length list has ${lengths.size} entries for ${coordinates.size} unique coordinates")
+    }
+    val vertices = ArrayList<de.haumacher.kotlinjt.lsg.Vec3F32>(repData.numberOfVertexRecords)
+    for ((unique, length) in lengths.withIndex()) {
+        if (length < 0) throw JtFormatException("negative unique vertex length $length")
+        repeat(length) { vertices.add(coordinates[unique]) }
+    }
+    if (vertices.size != repData.numberOfVertexRecords) {
+        throw JtFormatException(
+            "unique vertex lengths sum to ${vertices.size}, ${repData.numberOfVertexRecords} vertex records declared",
+        )
+    }
+
+    if (primitives.isEmpty() || primitives.first() != 0 || primitives.last() != vertexIndices.size) {
+        throw JtFormatException("primitive list indices do not tile the ${vertexIndices.size}-entry vertex list")
+    }
+    val polylineCount = primitives.size - 1
+    if (faceGroups.isEmpty() || faceGroups.first() != 0 || faceGroups.last() != polylineCount) {
+        throw JtFormatException("face group list indices do not tile the $polylineCount polylines")
+    }
+    val groupOfPolyline = IntArray(polylineCount)
+    for (group in 0 until faceGroups.size - 1) {
+        val from = faceGroups[group]
+        val to = faceGroups[group + 1]
+        if (from > to || from < 0 || to > polylineCount) {
+            throw JtFormatException("face group $group spans invalid polyline range [$from, $to)")
+        }
+        for (p in from until to) groupOfPolyline[p] = group
+    }
+    val polylines =
+        List(polylineCount) { p ->
+            val from = primitives[p]
+            val to = primitives[p + 1]
+            if (from > to) throw JtFormatException("primitive $p spans invalid vertex range [$from, $to)")
+            val indices =
+                List(to - from) { k ->
+                    val index = vertexIndices[from + k]
+                    if (index !in vertices.indices) {
+                        throw JtFormatException("vertex list index $index outside the ${vertices.size} vertex records")
+                    }
+                    index
+                }
+            PolylineGeometry.Polyline(indices, groupOfPolyline[p])
+        }
+    return PolylineGeometry(vertices, polylines)
 }

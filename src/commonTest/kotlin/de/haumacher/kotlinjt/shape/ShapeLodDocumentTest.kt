@@ -16,10 +16,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The Shape LOD segment document model (§7): a synthetic v9 tri-strip element carrying a unit
- * tetrahedron — hand-built bytes covering the complete Figure 81 chain down to the vertex
- * records — plus the hostile paths (truncation, unknown types, the unestablished v10
- * generation), each of which must carry opaquely with a named note and stay byte-identical.
+ * The Shape LOD segment document model (§7): synthetic tri-strip elements carrying a unit
+ * tetrahedron in both wire generations (JT 9 and v10 — hand-built bytes covering the
+ * complete Figure 81 chain down to the vertex records), a v10 polyline element, plus the
+ * hostile paths (truncation, unknown types, cross-generation bodies, corrupt hashes), each
+ * of which must carry opaquely with a named note and stay byte-identical.
  */
 class ShapeLodDocumentTest {
     private val v9 = JtVersion(9, 5)
@@ -62,6 +63,68 @@ class ShapeLodDocumentTest {
             0, -128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 46, -127, -2, -98, 1, 0, 2, 0, 0, 0, 0,
             0, 0, 0, 1, 0,
+        )
+
+    /**
+     * A complete Tri-Strip Set Shape LOD element body in the v10 wire layout (issue #6): the
+     * same unit tetrahedron with correct v10 composite and coordinate hashes, the nested
+     * Logical Element Header and the trailing U8 version. Independently verified against the
+     * reference decoding pipeline.
+     */
+    private val tetraBodyV10 =
+        byteArrayOf(
+            4, 77, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 108,
+            1, 0, 0, -83, -91, 48, -8, 76, -66, -68, 79, -101, 95, -71, 38, -110,
+            120, -46, -31, 9, 1, 0, 0, 0, 1, 77, 0, 0, 0, 1, 3, 0,
+            0, 0, 0, 96, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0, 3,
+            0, 0, 0, 1, 0, 0, 0, 0, 32, 0, 0, 0, 3, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, -128, 0, 0,
+            0, 3, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0,
+            0, 4, 0, 0, 0, 0, -128, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, -128,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, -128, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 106, 21, 122, 74, 2, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, -128, 63, 0, 0, 0,
+            0, 0, 0, 0, -128, 63, 0, 0, 0, 0, 0, 0, 0, -128, 63, 0,
+            4, 0, 0, 0, 0, -128, 0, 0, 0, 0, 0, 0, 0, 0, 0, -128,
+            63, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, -128, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -128, 63, 0, 0,
+            0, 0, 4, 0, 0, 0, 0, -128, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, -128, 63, -120, 90, -32, -24, 1,
+        )
+
+    /**
+     * A complete Polyline Set Shape LOD element body (v10 wire layout, issue #6): two
+     * polylines over a unit square — [0,1,2] and [2,3] — in two face groups, with correct
+     * FGPV, unique-length and coordinate hashes.
+     */
+    private val polylineBodyV10 =
+        byteArrayOf(
+            4, 78, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 14,
+            1, 0, 0, 50, 45, -63, 17, -7, 56, -70, 69, -109, -70, 102, -7, -43,
+            56, -35, -5, 9, 1, 0, 0, 0, 1, 78, 0, 0, 0, 1, 2, 0,
+            0, 0, 2, 0, 0, 0, 5, 0, 0, 0, 3, 0, 0, 0, 0, 96,
+            0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3,
+            0, 0, 0, 0, 96, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0,
+            5, 0, 0, 0, 5, 0, 0, 0, 0, -96, 0, 0, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0,
+            0, -86, -7, -128, -90, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 4, 0, 0, 0, 4, 0, 0, 0, 0, -128, 0, 0, 0, 1, 0,
+            0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 83, -72,
+            119, 64, 4, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, -128, 63, 0,
+            0, 0, 0, 0, 0, 0, -128, 63, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 4, 0, 0, 0, 0, -128, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, -128, 63, 0, 0, -128, 63, 0, 0, 0, 0, 4, 0, 0, 0, 0,
+            -128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -128, 63,
+            0, 0, -128, 63, 4, 0, 0, 0, 0, -128, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -23, -126, 103,
+            -79, 1,
         )
 
     private fun elementData(build: ByteWriter.() -> Unit): ByteArray = ByteWriter(order).apply(build).toByteArray()
@@ -145,6 +208,98 @@ class ShapeLodDocumentTest {
         assertEquals(0, table.tables.size)
     }
 
+    // spec: Figure 81
+    @Test
+    fun v10TriStripSetElementDecodesTheTetrahedron() {
+        val bytes =
+            elementData {
+                writeFrame(ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT, tetraBodyV10)
+                writeEndMarker()
+                writeEmptyPropertyTable()
+            }
+        val result = roundTrip(bytes, v10)
+        assertEquals(emptyList(), result.notes.map { it.name })
+        val element = assertIs<TriStripSetShapeLodElementV10>(result.document.elements.single())
+        assertEquals(77, element.objectId)
+        assertEquals(0x2UL, element.vertexBindings)
+        assertEquals(1, element.version)
+
+        // spec: Figure 85 — the nested Logical Element Header inside Vertex Shape LOD Data.
+        assertEquals(
+            NestedElementHeader.TOPO_MESH_TOPOLOGICALLY_COMPRESSED_LOD_DATA_TYPE_ID,
+            element.nestedHeader.objectTypeId,
+        )
+        assertEquals(9, element.nestedHeader.objectBaseType)
+
+        // spec: Figure 92/93 — the same tetrahedron the JT 9 body decodes to.
+        val geometry = assertNotNull(result.document.triStripGeometry)
+        assertEquals(
+            listOf(Vec3F32(0f, 0f, 0f), Vec3F32(1f, 0f, 0f), Vec3F32(0f, 1f, 0f), Vec3F32(0f, 0f, 1f)),
+            geometry.vertices,
+        )
+        assertEquals(4, geometry.triangles.size)
+        assertEquals(
+            listOf(
+                listOf(0, 1, 2),
+                listOf(2, 1, 3),
+                listOf(2, 3, 0),
+                listOf(3, 1, 0),
+            ),
+            geometry.triangles.map { listOf(it.v0, it.v1, it.v2) },
+        )
+    }
+
+    // spec: Figure 82
+    @Test
+    fun v10PolylineSetElementDecodesTheSquareOutline() {
+        val bytes =
+            elementData {
+                writeFrame(ObjectTypeIds.POLYLINE_SET_SHAPE_LOD_ELEMENT, polylineBodyV10)
+                writeEndMarker()
+                writeEmptyPropertyTable()
+            }
+        val result = roundTrip(bytes, v10)
+        assertEquals(emptyList(), result.notes.map { it.name })
+        val element = assertIs<PolylineSetShapeLodElementV10>(result.document.elements.single())
+        assertEquals(78, element.objectId)
+        assertEquals(
+            NestedElementHeader.TOPO_MESH_COMPRESSED_LOD_DATA_TYPE_ID,
+            element.nestedHeader.objectTypeId,
+        )
+
+        // spec: Figure 89 — index lists slice the vertex records into polylines.
+        val geometry = assertNotNull(result.document.polylineGeometry)
+        assertEquals(
+            listOf(Vec3F32(0f, 0f, 0f), Vec3F32(1f, 0f, 0f), Vec3F32(1f, 1f, 0f), Vec3F32(0f, 1f, 0f)),
+            geometry.vertices,
+        )
+        assertEquals(
+            listOf(
+                PolylineGeometry.Polyline(listOf(0, 1, 2), 0),
+                PolylineGeometry.Polyline(listOf(2, 3), 1),
+            ),
+            geometry.polylines,
+        )
+    }
+
+    // spec: Figure 92
+    @Test
+    fun v10CorruptCompositeHashRefusesWithNote() {
+        val corrupt = tetraBodyV10.copyOf()
+        // The composite hash sits directly before the vertex records' U64 bindings.
+        val hashOffset = 248
+        corrupt[hashOffset] = (corrupt[hashOffset].toInt() xor 0x11).toByte()
+        val bytes =
+            elementData {
+                writeFrame(ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT, corrupt)
+                writeEndMarker()
+                writeEmptyPropertyTable()
+            }
+        val result = roundTrip(bytes, v10)
+        assertEquals(listOf("ELEMENT_DECODE_FAILED"), result.notes.map { it.name })
+        assertIs<OpaqueShapeLodElement>(result.document.elements.single())
+    }
+
     // spec: Figure 92
     @Test
     fun corruptTopologyStreamRefusesWithNoteAndStaysByteIdentical() {
@@ -205,12 +360,27 @@ class ShapeLodDocumentTest {
     }
 
     @Test
-    fun v10ShapeBodiesStayOpaqueWithNote() {
-        // The v10 generation's shape element layouts are established together with the LZMA
-        // codec package (no v10 fixture exposes them today) — never guessed.
+    fun jt9BodyUnderV10RulesRefusesWithNote() {
+        // The v10 tri-strip layout (issue #6) differs from the JT 9 one; a JT 9 body read
+        // under the v10 grammar must refuse to opaque with a named note, never misread.
         val bytes =
             elementData {
                 writeFrame(ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT, tetraBody)
+                writeEndMarker()
+                writeEmptyPropertyTable()
+            }
+        val result = roundTrip(bytes, v10)
+        assertEquals(listOf("ELEMENT_DECODE_FAILED"), result.notes.map { it.name })
+        assertIs<OpaqueShapeLodElement>(result.document.elements.single())
+    }
+
+    @Test
+    fun unestablishedV10ShapeTypesStayOpaqueWithNote() {
+        // Point/polygon/primitive set layouts have no v10 fixture — carried opaquely, never
+        // guessed (deferral table in DESIGN.md).
+        val bytes =
+            elementData {
+                writeFrame(ObjectTypeIds.POINT_SET_SHAPE_LOD_ELEMENT, byteArrayOf(4, 0, 0, 0, 0, 1, 1))
                 writeEndMarker()
                 writeEmptyPropertyTable()
             }

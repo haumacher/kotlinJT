@@ -59,9 +59,10 @@ data class PointQuantizerData(
 
 /**
  * Compressed Vertex Coordinate Array (v10 §12.1.3, Figure 138; JT 9 wire format per the 9.5
- * reference §8.1.4, fixture-verified — DESIGN.md). The JT 9 lossless path stores an
- * exponent+mantissa packet pair per component; the quantized path stores one code packet per
- * component. The stored hash is verified at decode, so a codec defect can never yield
+ * reference §8.1.4 — both fixture-verified, DESIGN.md). The JT 9 lossless path stores an
+ * exponent+mantissa packet pair per component; v10 stores one binary-float packet per
+ * component ([readV10]); the quantized path stores one code packet per component in both
+ * generations. The stored hash is verified at decode, so a codec defect can never yield
  * silently wrong coordinates.
  */
 data class CompressedVertexCoordinateArray(
@@ -124,6 +125,60 @@ data class CompressedVertexCoordinateArray(
                     componentValues.add(codes)
                     hash = JtHash.hash32(codes.toIntArray(), hash)
                 }
+            }
+            val storedHash = r.readI32()
+            if (storedHash != hash) {
+                throw JtFormatException("vertex coordinate hash mismatch: stored $storedHash, computed $hash")
+            }
+            val coordinates =
+                List(count) { i ->
+                    if (lossless) {
+                        Vec3F32(
+                            Float.fromBits(componentValues[0][i]),
+                            Float.fromBits(componentValues[1][i]),
+                            Float.fromBits(componentValues[2][i]),
+                        )
+                    } else {
+                        Vec3F32(
+                            quantizer.x.dequantize(componentValues[0][i]),
+                            quantizer.y.dequantize(componentValues[1][i]),
+                            quantizer.z.dequantize(componentValues[2][i]),
+                        )
+                    }
+                }
+            return CompressedVertexCoordinateArray(count, components, quantizer, packets, storedHash, coordinates)
+        }
+
+        /**
+         * Reads the v10 wire format (Figure 138, NIST-10.5-verified): one Lag1-predicted
+         * packet per component — binary float bits on the lossless path, quantizer codes
+         * otherwise. Both paths hash per whole component array (DESIGN.md: the reference's
+         * per-value pseudo-code does not match the bytes).
+         */
+        fun readV10(r: ByteReader): CompressedVertexCoordinateArray {
+            val count = r.readI32()
+            if (count < 0) throw JtFormatException("unique vertex count $count is negative")
+            val components = r.readU8().toInt()
+            if (components != 3) {
+                throw JtFormatException("vertex coordinate array with $components components; the spec allows only 3")
+            }
+            val quantizer = PointQuantizerData.read(r)
+            val quantizers = listOf(quantizer.x, quantizer.y, quantizer.z)
+            if (quantizers.any { it.numberOfBits != quantizer.x.numberOfBits }) {
+                throw JtFormatException("point quantizer components disagree on the number of bits")
+            }
+            val lossless = quantizer.x.numberOfBits == 0
+            val packets = mutableListOf<Int32Cdp>()
+            val componentValues = mutableListOf<List<Int>>()
+            var hash = 0
+            for (component in 0 until 3) {
+                val (packet, values) = readInt32CdpValuesV10(r, Predictor.LAG1)
+                packets.add(packet)
+                if (values.size != count) {
+                    throw JtFormatException("coordinate component $component decodes to ${values.size} values, expected $count")
+                }
+                componentValues.add(values)
+                hash = JtHash.hash32(values.toIntArray(), hash)
             }
             val storedHash = r.readI32()
             if (storedHash != hash) {
@@ -235,6 +290,102 @@ data class CompressedVertexNormalArray(
                 throw JtFormatException("vertex normal hash mismatch: stored $storedHash, computed $hash")
             }
             return CompressedVertexNormalArray(count, components, quantizationBits, packets, storedHash, normals)
+        }
+
+        /**
+         * Reads the v10 wire format (Figure 139, NIST-10.5-verified): quantized normals are
+         * one packed Deering code packet (`[sextant:3][octant:3][theta:n][psi:n]`, Annex B
+         * `unpackCode`); lossless normals are one binary-float packet per component. Both use
+         * the NULL predictor (the Lag1 the §12.1.4 prose names does not match the bytes —
+         * DESIGN.md), and both hash per whole array.
+         */
+        fun readV10(r: ByteReader): CompressedVertexNormalArray {
+            val count = r.readI32()
+            if (count < 0) throw JtFormatException("normal count $count is negative")
+            val components = r.readU8().toInt()
+            if (components != 3) {
+                throw JtFormatException("normal array with $components components; normals are always 3-component")
+            }
+            val quantizationBits = r.readU8().toInt()
+            val packets = mutableListOf<Int32Cdp>()
+            var hash = 0
+            val normals: List<Vec3F32>
+            if (quantizationBits == 0) {
+                val componentBits = mutableListOf<List<Int>>()
+                for (component in 0 until 3) {
+                    val (packet, values) = readInt32CdpValuesV10(r, Predictor.NONE)
+                    packets.add(packet)
+                    if (values.size != count) {
+                        throw JtFormatException("normal component $component decodes to ${values.size} values, expected $count")
+                    }
+                    componentBits.add(values)
+                    hash = JtHash.hash32(values.toIntArray(), hash)
+                }
+                normals =
+                    List(count) { i ->
+                        Vec3F32(
+                            Float.fromBits(componentBits[0][i]),
+                            Float.fromBits(componentBits[1][i]),
+                            Float.fromBits(componentBits[2][i]),
+                        )
+                    }
+            } else {
+                if (quantizationBits > 13) {
+                    throw JtFormatException("Deering quantization bits $quantizationBits exceed the maximum of 13")
+                }
+                val (packet, codes) = readInt32CdpValuesV10(r, Predictor.NONE)
+                packets.add(packet)
+                if (codes.size != count) {
+                    throw JtFormatException("Deering normal codes decode to ${codes.size} values, expected $count")
+                }
+                hash = JtHash.hash32(codes.toIntArray(), hash)
+                val mask = (1 shl quantizationBits) - 1
+                normals =
+                    List(count) { i ->
+                        val code = codes[i]
+                        deeringCodeToVector(
+                            (code ushr (2 * quantizationBits + 3)) and 0x7,
+                            (code ushr (2 * quantizationBits)) and 0x7,
+                            (code ushr quantizationBits) and mask,
+                            code and mask,
+                            quantizationBits,
+                        )
+                    }
+            }
+            val storedHash = r.readI32()
+            if (storedHash != hash) {
+                throw JtFormatException("vertex normal hash mismatch: stored $storedHash, computed $hash")
+            }
+            return CompressedVertexNormalArray(count, components, quantizationBits, packets, storedHash, normals)
+        }
+    }
+}
+
+/**
+ * Compressed Vertex Flag Array (v10 §12.1.7, Figure 142; NIST-10.5-verified): per-vertex-
+ * record bit flags. The figure defines no stored hash, so the only structural validation is
+ * the count; a v10 shape binding vertex flags (Table 48 bit 7) carries this array.
+ */
+data class CompressedVertexFlagArray(
+    val vertexFlagCount: Int,
+    val packet: Int32Cdp,
+    /** The decoded per-record flags; size == [vertexFlagCount]. */
+    val flags: List<Int>,
+) {
+    fun write(w: ByteWriter) {
+        w.writeU32(vertexFlagCount.toUInt())
+        packet.encode(w)
+    }
+
+    companion object {
+        fun read(r: ByteReader): CompressedVertexFlagArray {
+            val count = r.readU32().toLong()
+            if (count > Int.MAX_VALUE) throw JtFormatException("vertex flag count $count out of range")
+            val (packet, flags) = readInt32CdpValuesV10(r, Predictor.NONE)
+            if (flags.size != count.toInt()) {
+                throw JtFormatException("vertex flag array decodes ${flags.size} flags, declared $count")
+            }
+            return CompressedVertexFlagArray(count.toInt(), packet, flags)
         }
     }
 }

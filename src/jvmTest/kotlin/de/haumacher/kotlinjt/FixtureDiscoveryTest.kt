@@ -1,19 +1,26 @@
 package de.haumacher.kotlinjt
 
-import de.haumacher.kotlinjt.lsg.BaseShapeData
+import de.haumacher.kotlinjt.lsg.GroupNodeElement
 import de.haumacher.kotlinjt.lsg.LateLoadedPropertyAtomElement
+import de.haumacher.kotlinjt.lsg.LodNodeElement
 import de.haumacher.kotlinjt.lsg.LsgDocument
+import de.haumacher.kotlinjt.lsg.LsgGeneration
+import de.haumacher.kotlinjt.lsg.MetaDataNodeElement
 import de.haumacher.kotlinjt.lsg.OpaqueLsgElement
+import de.haumacher.kotlinjt.lsg.PartNodeElement
 import de.haumacher.kotlinjt.lsg.PartitionNodeElement
-import de.haumacher.kotlinjt.lsg.PolygonSetShapeNodeElement
+import de.haumacher.kotlinjt.lsg.RangeLodNodeElement
+import de.haumacher.kotlinjt.lsg.ShapeNodeElement
 import de.haumacher.kotlinjt.lsg.StringPropertyAtomElement
-import de.haumacher.kotlinjt.lsg.TriStripSetShapeNodeElement
+import de.haumacher.kotlinjt.lsg.SwitchNodeElement
+import de.haumacher.kotlinjt.lsg.TypedLsgElement
 import de.haumacher.kotlinjt.lsg.decodeLsg
 import de.haumacher.kotlinjt.lsg.encodeLsgSegmentPayload
 import de.haumacher.kotlinjt.lsg.lsgSegment
 import de.haumacher.kotlinjt.shape.OpaqueShapeLodElement
+import de.haumacher.kotlinjt.shape.PolylineGeometry
 import de.haumacher.kotlinjt.shape.ShapeLodDocument
-import de.haumacher.kotlinjt.shape.TriStripSetShapeLodElement
+import de.haumacher.kotlinjt.shape.TriStripGeometry
 import de.haumacher.kotlinjt.shape.decodeShapeLod
 import de.haumacher.kotlinjt.shape.shapeLodSegments
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -51,10 +58,10 @@ class FixtureDiscoveryTest {
     private fun sha256(data: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }
 
     /**
-     * Resolves each late-loaded shape segment to the Base Shape Data of the LSG node that
-     * references it: late-loaded atom -> owning element via the property table -> shape node.
+     * Resolves each late-loaded shape segment to the LSG shape node that references it:
+     * late-loaded atom -> owning element via the property table -> shape node.
      */
-    private fun shapeNodeDataBySegmentId(document: LsgDocument): Map<de.haumacher.kotlinjt.io.Guid, BaseShapeData> {
+    private fun shapeNodeBySegmentId(document: LsgDocument): Map<de.haumacher.kotlinjt.io.Guid, ShapeNodeElement> {
         val table = document.propertyTable ?: return emptyMap()
         val atomOwner = mutableMapOf<Int, Int>()
         for (elementTable in table.tables) {
@@ -62,20 +69,130 @@ class FixtureDiscoveryTest {
                 atomOwner[entry.valuePropertyAtomObjectId] = elementTable.elementObjectId
             }
         }
-        val shapeDataByNodeId =
-            document.graphElements.mapNotNull { element ->
-                when (element) {
-                    is TriStripSetShapeNodeElement -> element.objectId to element.vertexShape.shape
-                    is PolygonSetShapeNodeElement -> element.objectId to element.vertexShape.shape
-                    else -> null
-                }
-            }.toMap()
+        val shapeNodesById = document.graphElements.filterIsInstance<ShapeNodeElement>().associateBy { it.objectId }
         return document.propertyAtoms.filterIsInstance<LateLoadedPropertyAtomElement>()
             .mapNotNull { atom ->
                 val owner = atomOwner[atom.objectId] ?: return@mapNotNull null
-                val shapeData = shapeDataByNodeId[owner] ?: return@mapNotNull null
-                atom.segmentId to shapeData
+                val node = shapeNodesById[owner] ?: return@mapNotNull null
+                atom.segmentId to node
             }.toMap()
+    }
+
+    /** The parent node id of every child node id, from the LSG's child lists. */
+    private fun parentByNodeId(document: LsgDocument): Map<Int, Int> {
+        val parentOf = mutableMapOf<Int, Int>()
+        for (element in document.graphElements) {
+            if (element !is TypedLsgElement) continue
+            val children =
+                when (element) {
+                    is GroupNodeElement -> element.group.childNodeObjectIds
+                    is PartitionNodeElement -> element.group.childNodeObjectIds
+                    is PartNodeElement -> element.metaData.group.childNodeObjectIds
+                    is MetaDataNodeElement -> element.metaData.group.childNodeObjectIds
+                    is LodNodeElement -> element.lod.group.childNodeObjectIds
+                    is RangeLodNodeElement -> element.lod.group.childNodeObjectIds
+                    is SwitchNodeElement -> element.group.childNodeObjectIds
+                    else -> emptyList()
+                }
+            for (child in children) parentOf[child] = element.objectId
+        }
+        return parentOf
+    }
+
+    /** Index/normal sanity plus the LSG-declared count ranges for a triangle mesh. */
+    private fun checkTriStripGeometry(
+        segment: JtSegment,
+        geometry: TriStripGeometry,
+        generation: LsgGeneration,
+        declared: de.haumacher.kotlinjt.lsg.BaseShapeData?,
+    ) {
+        val id = segment.tocEntry.segmentId
+        assertTrue(geometry.triangles.isNotEmpty(), "$id: no triangles decoded")
+        for (triangle in geometry.triangles) {
+            for (index in listOf(triangle.v0, triangle.v1, triangle.v2)) {
+                assertTrue(index in geometry.vertices.indices, "vertex index $index out of range")
+            }
+            if (geometry.normals.isNotEmpty()) {
+                for (index in listOf(triangle.n0, triangle.n1, triangle.n2)) {
+                    assertTrue(index in geometry.normals.indices, "normal index $index out of range")
+                }
+            }
+        }
+        for (normal in geometry.normals) {
+            val length = kotlin.math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
+            assertTrue(kotlin.math.abs(length - 1f) < 1e-3, "non-unit normal $normal")
+        }
+        if (declared == null) return
+        // Cross-model checks: the declared vertex count is the rendered (per-corner) count,
+        // so the decoded unique coordinates can never exceed it.
+        val vertexRange = declared.vertexCountRange
+        if (vertexRange.max > 0) {
+            assertTrue(
+                geometry.vertices.size <= vertexRange.max,
+                "$id: ${geometry.vertices.size} unique vertices exceed the LSG-declared maximum $vertexRange",
+            )
+        }
+        val polygonRange = declared.polygonCountRange
+        if (polygonRange.max > 0) {
+            // NX 10.5 declares more polygons than the topological decode yields (the strip
+            // form's degenerate triangles are counted); the NetAllied 9.5 fixture declares
+            // the exact triangle count. Assert each generation's actual truth.
+            assertTrue(
+                geometry.triangles.size <= polygonRange.max,
+                "$id: ${geometry.triangles.size} triangles exceed the LSG-declared range $polygonRange",
+            )
+            if (generation == LsgGeneration.V9) {
+                assertTrue(
+                    geometry.triangles.size >= polygonRange.min,
+                    "$id: ${geometry.triangles.size} triangles below the LSG-declared range $polygonRange",
+                )
+            }
+        }
+    }
+
+    /** Index sanity plus the LSG-declared count ranges for a polyline set. */
+    private fun checkPolylineGeometry(
+        segment: JtSegment,
+        geometry: PolylineGeometry,
+        declared: de.haumacher.kotlinjt.lsg.BaseShapeData?,
+    ) {
+        val id = segment.tocEntry.segmentId
+        assertTrue(geometry.polylines.isNotEmpty(), "$id: no polylines decoded")
+        for (polyline in geometry.polylines) {
+            assertTrue(polyline.vertexIndices.size >= 2, "$id: polyline with ${polyline.vertexIndices.size} vertices")
+            for (index in polyline.vertexIndices) {
+                assertTrue(index in geometry.vertices.indices, "$id: vertex index $index out of range")
+            }
+        }
+        if (declared == null) return
+        // The declared vertex count is the per-corner count of the vertex list — exact in
+        // the NIST fixture (all 15 polyline LODs).
+        val corners = geometry.polylines.sumOf { it.vertexIndices.size }
+        val vertexRange = declared.vertexCountRange
+        if (vertexRange.max > 0) {
+            assertTrue(
+                corners in vertexRange.min..vertexRange.max,
+                "$id: $corners polyline corners outside the LSG-declared range $vertexRange",
+            )
+        }
+    }
+
+    /** Walks up to the nearest LOD-holding ancestor (Range LOD / LOD node) of a shape node. */
+    private fun lodAncestorOf(
+        nodeId: Int,
+        parentOf: Map<Int, Int>,
+        document: LsgDocument,
+    ): Int? {
+        val lodNodes =
+            document.graphElements.filter { it is LodNodeElement || it is RangeLodNodeElement }
+                .filterIsInstance<TypedLsgElement>().map { it.objectId }.toSet()
+        var current: Int? = parentOf[nodeId]
+        var guard = 0
+        while (current != null && guard++ < 64) {
+            if (current in lodNodes) return current
+            current = parentOf[current]
+        }
+        return null
     }
 
     @TestFactory
@@ -177,81 +294,106 @@ class FixtureDiscoveryTest {
                         )
                     }
                 },
-                dynamicTest("decoded tri-strip geometry is sane and consistent with the LSG") {
+                dynamicTest("decoded shape geometry is sane and consistent with the LSG") {
                     val file = JtFile.parse(bytes)
+                    val generation = LsgGeneration.of(file.header.version)
                     val documents =
                         file.shapeLodSegments().mapNotNull { segment ->
                             file.decodeShapeLod(segment)?.let { segment to it.document }
                         }
-                    val triStrips =
+                    val typed =
                         documents.mapNotNull { (segment, document) ->
-                            document.elements.filterIsInstance<TriStripSetShapeLodElement>().firstOrNull()
-                                ?.let { segment to it }
+                            val tri = document.triStripGeometry
+                            val poly = document.polylineGeometry
+                            if (tri == null && poly == null) null else Triple(segment, tri, poly)
                         }
-                    assumeTrue(triStrips.isNotEmpty(), "no typed tri-strip LOD elements in this fixture")
+                    assumeTrue(typed.isNotEmpty(), "no typed shape geometry in this fixture")
 
                     val lsg = file.decodeLsg()?.document
                     val partitionBox =
                         lsg?.graphElements?.filterIsInstance<PartitionNodeElement>()?.firstOrNull()
                             ?.let { it.untransformedBBox ?: it.transformedBBox }
-                    val shapeDataBySegment = lsg?.let { shapeNodeDataBySegmentId(it) }.orEmpty()
+                    val nodeBySegment = lsg?.let { shapeNodeBySegmentId(it) }.orEmpty()
 
-                    for ((segment, element) in triStrips) {
-                        val geometry = element.geometry
-                        assertTrue(geometry.triangles.isNotEmpty(), "${segment.tocEntry.segmentId}: no triangles decoded")
-                        for (vertex in geometry.vertices) {
+                    fun checkVertices(
+                        segment: JtSegment,
+                        vertices: List<de.haumacher.kotlinjt.lsg.Vec3F32>,
+                        nodeBox: de.haumacher.kotlinjt.lsg.BBoxF32?,
+                    ) {
+                        // Shape coordinates live in the owning node's local space; the
+                        // partition box is a world-space fallback for files whose nodes
+                        // carry no transforms (the shape node cannot be resolved).
+                        val box = nodeBox ?: partitionBox
+                        for (vertex in vertices) {
                             assertTrue(
                                 vertex.x.isFinite() && vertex.y.isFinite() && vertex.z.isFinite(),
                                 "${segment.tocEntry.segmentId}: non-finite coordinate $vertex",
                             )
-                            if (partitionBox != null) {
-                                val eps = 1e-3f
+                            val eps = 1e-3f
+                            if (box != null) {
                                 assertTrue(
-                                    vertex.x >= partitionBox.min.x - eps && vertex.x <= partitionBox.max.x + eps &&
-                                        vertex.y >= partitionBox.min.y - eps && vertex.y <= partitionBox.max.y + eps &&
-                                        vertex.z >= partitionBox.min.z - eps && vertex.z <= partitionBox.max.z + eps,
-                                    "${segment.tocEntry.segmentId}: $vertex outside the partition box $partitionBox",
-                                )
-                            }
-                        }
-                        for (triangle in geometry.triangles) {
-                            for (index in listOf(triangle.v0, triangle.v1, triangle.v2)) {
-                                assertTrue(index in geometry.vertices.indices, "vertex index $index out of range")
-                            }
-                            if (geometry.normals.isNotEmpty()) {
-                                for (index in listOf(triangle.n0, triangle.n1, triangle.n2)) {
-                                    assertTrue(index in geometry.normals.indices, "normal index $index out of range")
-                                }
-                            }
-                        }
-                        for (normal in geometry.normals) {
-                            val length = kotlin.math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
-                            assertTrue(kotlin.math.abs(length - 1f) < 1e-3, "non-unit normal $normal")
-                        }
-                        // Cross-model check: the LSG shape node that late-loads this segment
-                        // declares vertex/polygon count ranges the decoded LOD0 must satisfy.
-                        val declared = shapeDataBySegment[segment.tocEntry.segmentId]
-                        if (declared != null && segment.kind == SegmentKind.SHAPE_LOD0) {
-                            // The declared vertex count is the rendered (per-corner) count;
-                            // the decoded unique coordinates can never exceed it.
-                            val vertexRange = declared.vertexCountRange
-                            if (vertexRange.max > 0) {
-                                assertTrue(
-                                    geometry.vertices.size <= vertexRange.max,
-                                    "${segment.tocEntry.segmentId}: ${geometry.vertices.size} unique vertices exceed the " +
-                                        "LSG-declared maximum $vertexRange",
-                                )
-                            }
-                            val polygonRange = declared.polygonCountRange
-                            if (polygonRange.max > 0) {
-                                assertTrue(
-                                    geometry.triangles.size in polygonRange.min..polygonRange.max,
-                                    "${segment.tocEntry.segmentId}: ${geometry.triangles.size} triangles outside the " +
-                                        "LSG-declared range $polygonRange",
+                                    vertex.x >= box.min.x - eps && vertex.x <= box.max.x + eps &&
+                                        vertex.y >= box.min.y - eps && vertex.y <= box.max.y + eps &&
+                                        vertex.z >= box.min.z - eps && vertex.z <= box.max.z + eps,
+                                    "${segment.tocEntry.segmentId}: $vertex outside its shape node's / partition's box $box",
                                 )
                             }
                         }
                     }
+
+                    for ((segment, tri, poly) in typed) {
+                        val node = nodeBySegment[segment.tocEntry.segmentId]
+                        val declared = node?.shape
+                        if (tri != null) {
+                            checkTriStripGeometry(segment, tri, generation, declared)
+                            checkVertices(segment, tri.vertices, declared?.untransformedBBox)
+                        }
+                        if (poly != null) {
+                            checkPolylineGeometry(segment, poly, declared)
+                            checkVertices(segment, poly.vertices, declared?.untransformedBBox)
+                        }
+                    }
+                },
+                dynamicTest("primitive counts descend across each part's LOD tiers") {
+                    val file = JtFile.parse(bytes)
+                    val lsg = file.decodeLsg()?.document
+                    assumeTrue(lsg != null, "no decodable LSG segment in this fixture")
+                    val nodeBySegment = shapeNodeBySegmentId(lsg!!)
+                    val parentOf = parentByNodeId(lsg)
+                    // Per LOD ancestor: the (tier, primitive count) pairs of its decoded LODs.
+                    val groups = mutableMapOf<Int, MutableList<Pair<Int, Int>>>()
+                    for (segment in file.shapeLodSegments()) {
+                        val kind = segment.kind ?: continue
+                        val tier = kind.code - SegmentKind.SHAPE_LOD0.code
+                        if (tier < 0) continue
+                        val node = nodeBySegment[segment.tocEntry.segmentId] ?: continue
+                        val ancestor = lodAncestorOf(node.objectId, parentOf, lsg) ?: continue
+                        val document = file.decodeShapeLod(segment)?.document ?: continue
+                        // The comparable primitive count: triangles, or polyline corners.
+                        val count =
+                            document.triStripGeometry?.triangles?.size
+                                ?: document.polylineGeometry?.polylines?.sumOf { it.vertexIndices.size }
+                                ?: continue
+                        groups.getOrPut(ancestor) { mutableListOf() }.add(tier to count)
+                    }
+                    val multiTier = groups.values.filter { it.size > 1 }
+                    assumeTrue(multiTier.isNotEmpty(), "no part with more than one decoded LOD tier in this fixture")
+                    var checked = 0
+                    for (tiers in multiTier) {
+                        val sorted = tiers.sortedBy { it.first }
+                        assertEquals(sorted.map { it.first }.distinct(), sorted.map { it.first }, "duplicate LOD tier in one part")
+                        for (i in 1 until sorted.size) {
+                            // Strictly descending — what the NIST data actually shows on
+                            // every tier boundary of all 13 parts (issue #6).
+                            assertTrue(
+                                sorted[i].second < sorted[i - 1].second,
+                                "LOD${sorted[i].first} has ${sorted[i].second} primitives, not fewer than " +
+                                    "LOD${sorted[i - 1].first}'s ${sorted[i - 1].second}",
+                            )
+                            checked++
+                        }
+                    }
+                    println("LOD DESCENT: ${multiTier.size} parts, $checked tier boundaries strictly descending")
                 },
                 dynamicTest("a model-level LSG mutation yields a legal, model-equal file") {
                     val file = JtFile.parse(bytes)
