@@ -368,34 +368,34 @@ the NIST bytes contradict or complete the v10 text.
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Common Data Conventions and Constructs (p.196) | — | — |  |  |
-| Late-Loading Data (p.196) | — | — |  |  |
+| Late-Loading Data (p.196) | done | — | SceneReadTest, SceneSyntheticFileTest, SceneFixtureTest, FixtureDiscoveryTest | shape geometry resolved via Late Loaded Property Atoms by segment GUID + shape segment type (delta 13: object ids do not associate) |
 | TOC Segment Location (p.196) | — | — |  |  |
 | Bit Fields (p.196) | — | — |  |  |
 | Empty Field (p.196) | — | — |  |  |
 | Local version numbers (p.196) | — | — |  |  |
 | Version numbers (p.196) | — | — |  |  |
 | Hash Value (p.197) | — | — |  |  |
-| Scene graph construction (p.197) | — | — |  |  |
-| Metadata Conventions (p.198) | — | — |  |  |
-| Property Key Naming Conventions (p.198) | — | — |  |  |
-| PMI Properties (p.199) | — | — |  |  |
-| CAD Properties (p.199) | — | — |  |  |
-| Tessellation Properties (p.201) | — | — |  |  |
-| Miscellaneous Properties (p.202) | — | — |  |  |
-| The SUBNODE property and Reference Sets (p.203) | — | — |  |  |
-| LSG Attribute Accumulation Semantics (p.207) | — | — |  |  |
-| LSG Part Structure (p.208) | — | — |  |  |
-| Range LOD Node Alternative Rep Selection (p.208) | — | — |  |  |
-| B-Rep Face Group Associations (p.208) | — | — |  |  |
+| Scene graph construction (p.197) | done | — | SceneReadTest, SceneFixtureTest, SceneNistFixtureTest | the Layer 2 walk: partition root, instance sharing (shared scene objects), group/metadata structure; write side comes with `writeJt` |
+| Metadata Conventions (p.198) | partial | — | SceneReadTest, SceneFixtureTest | the name/units conventions are interpreted (rows below); all other properties are carried as Layer 1 atoms, uninterpreted |
+| Property Key Naming Conventions (p.198) | done | — | SceneReadTest (hidden vs. visible key forms), SceneFixtureTest | hidden `key` and visible `key::` accepted as one key, case-sensitive otherwise |
+| PMI Properties (p.199) | — | — |  | with the PMI package (§11) |
+| CAD Properties (p.199) | partial | — | SceneReadTest (units battery), SceneFixtureTest, SceneNistFixtureTest | JT_PROP_MEASUREMENT_UNITS (the required property) interpreted case-insensitively per the spec's own producer note — both fixtures write "Millimeters"; the other CAD properties pass through as Layer 1 atoms |
+| Tessellation Properties (p.201) | — | — |  | carried raw at Layer 1 (Chordal/Angular/SegLength observed on the NIST fixture) |
+| Miscellaneous Properties (p.202) | partial | — | SceneReadTest.nameEncodingIsDecodedAndPlainNamesPassVerbatim, SceneNistFixtureTest | JT_PROP_NAME incl. the `Name;version;instance:` encoded form interpreted (both fixtures use it); the other miscellaneous keys pass through |
+| The SUBNODE property and Reference Sets (p.203) | — | — |  | observed on the NIST fixture, carried raw; interpretation's time comes with a consumer that needs reference sets |
+| LSG Attribute Accumulation Semantics (p.207) | partial | — | SceneReadTest (replacement, ignore flag, force/final note), TransformProbeTest, SceneFixtureTest (world bounds) | transforms multiply, materials replace, Ignore flag honored; force/final/field-inhibit produce a named note instead of a guess — both fixtures use plain accumulation (stateFlags 8 everywhere) |
+| LSG Part Structure (p.208) | done | — | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneFixtureTest, SceneNistFixtureTest | the Figure 160 convention collapses to one named part node with per-tier meshes |
+| Range LOD Node Alternative Rep Selection (p.208) | partial | — | SceneReadTest (LodPolicy tests), SceneFixtureTest (descending tiers) | tier order (finest first) interpreted by LodPolicy; the eye-distance selection strategy is viewer runtime behavior, not a file property |
+| B-Rep Face Group Associations (p.208) | — | — |  | face groups are preserved at Layer 1 (TriStripGeometry.Triangle.faceGroup); the association semantics wait for B-rep interpretation, which is out of scope by doctrine |
 | Watermark Image (p.209) | — | — |  |  |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 156 — Assembly node with SUBNODE (p.203) | — | — |  |  |
-| Fig. 157 — Assembly node without SUBNODE (p.204) | — | — |  |  |
-| Fig. 158 — Displaying Nodes that have SUBNODE properties (p.204) | — | — |  |  |
-| Fig. 159 — CAD Component with Reference sets (p.205) | — | — |  |  |
-| Fig. 160 — JT Format Convention for Modeling each Part in LSG (p.208) | — | — |  |  |
+| Fig. 156 — Assembly node with SUBNODE (p.203) | — | — |  | with the SUBNODE row above |
+| Fig. 157 — Assembly node without SUBNODE (p.204) | — | — |  | as above |
+| Fig. 158 — Displaying Nodes that have SUBNODE properties (p.204) | — | — |  | as above |
+| Fig. 159 — CAD Component with Reference sets (p.205) | — | — |  | as above |
+| Fig. 160 — JT Format Convention for Modeling each Part in LSG (p.208) | done | — | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneNistFixtureTest | Part → Range LOD → per-tier Group → Shape, verified on both fixtures; the collapse folds it into one named part node |
 
 
 ## Annex A — Object Type Identifiers

@@ -149,6 +149,25 @@ sealed class NodeElement : TypedLsgElement() {
     abstract val baseNode: BaseNodeData
 }
 
+/**
+ * The ordered child node references of this node — group-family nodes list them in their
+ * Group Node Data; an instance node references exactly one shared child (§13.9: "not
+ * fundamentally different from a Group Node Element having only one child"); leaves none.
+ */
+val NodeElement.childObjectIds: List<Int>
+    get() =
+        when (this) {
+            is InstanceNodeElement -> listOf(childNodeObjectId)
+            is PartitionNodeElement -> group.childNodeObjectIds
+            is GroupNodeElement -> group.childNodeObjectIds
+            is SwitchNodeElement -> group.childNodeObjectIds
+            is LodNodeElement -> lod.group.childNodeObjectIds
+            is RangeLodNodeElement -> lod.group.childNodeObjectIds
+            is PartNodeElement -> metaData.group.childNodeObjectIds
+            is MetaDataNodeElement -> metaData.group.childNodeObjectIds
+            is BaseNodeElement, is ShapeNodeElement -> emptyList()
+        }
+
 /** Base Node Element (Figure 21). */
 data class BaseNodeElement(
     override val objectId: Int,

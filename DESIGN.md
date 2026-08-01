@@ -547,6 +547,102 @@ byte-identical, and the LsgProbeTest coherence probes (reference resolution, sin
 partition, property-table validity, late-loaded atoms hitting real TOC segments of the
 declared type) pass cross-producer for the first time.
 
+## Layer 2, read side: the scene façade (issue #7)
+
+**The API as landed** (`de.haumacher.kotlinjt.scene`, platform-free): `readScene(bytes, lodPolicy)`
+/ `JtFile.readScene(lodPolicy)` → `Scene(units, root, notes)`; `SceneNode(name, transform,
+meshes, polylines, material, children)`; `Mesh` (positions + normals, OBJ-style dual-indexed
+triangles); `PolylineSet`; `Material(baseColor, roughness, metallic)`; `LengthUnit`
+(Table 77 value set + `UNSPECIFIED`, each with `metersPerUnit`); `LodPolicy` (`ALL_LODS`,
+`FINEST_ONLY`); own `Vec3`/`Color`/`Mat4` value types (nothing JT-specific in the package's
+surface). Deviations from the issue #1 sketch, each deliberate:
+
+1. **`Scene.notes`** — the honesty mechanism. The extraction never throws for content
+   problems and never drops geometry silently; everything the scene cannot represent is a
+   named note on the Scene (`SCENE_STRUCTURE_UNAVAILABLE`, `SCENE_STRUCTURE_INCOMPLETE`,
+   `SCENE_GEOMETRY_UNAVAILABLE` — locating the node by its nearest *named* ancestor and the
+   segment GUID — `SCENE_UNITS_UNRECOGNIZED`, `SCENE_UNITS_MIXED`,
+   `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`, `SCENE_MATERIAL_AMBIGUOUS`). A part whose
+   geometry refuses to decode keeps its named node, empty, plus the note (pinned by a
+   synthetic whole-file test). Note lists live on the Scene, not on nodes — nodes stay
+   shareable across instance paths.
+2. **`SceneNode.polylines`** — a parallel per-LOD list next to `meshes`. 5 of the NIST
+   fixture's 13 parts are polyline-only (section curves, tracelines); skip-with-note would
+   demote perfectly decodable real-producer geometry. Rationale over the sketch: wireframe
+   parts are first-class scene content, not a refusal.
+3. **`readScene` never throws for content**: a file without a decodable LSG yields an empty
+   root plus `SCENE_STRUCTURE_UNAVAILABLE` (`JtFormatException` stays reserved for
+   "not a JT file" at `JtFile.parse`).
+
+**Transform convention** (validated by TransformProbeTest, now the model's contract): `Mat4`
+is row-major, row-vector — `p' = p·M`, translation in elements 12–14, world(child) =
+`child.transform * world(parent)`. `SceneNode.transform` is *local*; the flat array layout
+interchanges with glTF's column-major matrices without transposition.
+
+**The walk and the collapse.** The partition node is the root (§13.9). Conversion is
+memoized per LSG object id, so **instanced subtrees are shared scene objects** — identity
+semantics recorded: two paths to one part hold the *same* immutable `SceneNode`/`Mesh`
+objects (pinned by `assertSame` on the NIST hex nut's 10 instances); equality stays
+structural, sharing is an optimization the consumer may exploit but must not rely on for
+distinctness. The §13.9 Figure 160 part convention (Part → Range LOD → per-tier Group →
+Shapes) collapses to one named part node: a LOD node's children become the per-tier
+mesh/polyline lists (child order = tier order, finest first — byte-verified by the strictly
+descending NIST triangle counts); a *pass-through* child (no name, identity transform, no
+material, no geometry) is spliced out; a sole nameless transform-free child is absorbed.
+The collapse loses nothing the Scene models — it is what turns the 9.5 fixture into root →
+assembly → 12 named parts and the NIST file into root → 38 placed instances over 13 shared
+parts. Transforms *inside* a LOD tier (below the point where tiers become meshes) are baked
+into the vertex coordinates (points `p·M`, normals via inverse-transpose, renormalized);
+multiple shapes in one tier merge with index offsets (differing effective materials →
+`SCENE_MATERIAL_AMBIGUOUS`, first wins).
+
+**Names — what the fixtures actually use** (§13.8, Table 79): both producers put
+`JT_PROP_NAME` (hidden form, no `::`) on instance nodes and the partition, with the encoded
+value form `Name;version;instance:` (e.g. `90591A141 HEX NUT.asm;23;2035:`,
+`RB___E_01955.asm;0;0:`); the name component is extracted, non-matching values pass
+verbatim. Key lookup accepts hidden and visible (`key::`) forms as one key, case-sensitive
+otherwise. NX 10.5 additionally writes `CAD_PARTNAME::` on metadata nodes — not used for
+naming (JT_PROP_NAME is the convention the spec names for node names); it stays readable at
+Layer 1. Unnamed nodes get `""`, and geometry notes locate themselves via the nearest named
+ancestor (the name sits on the instance above the part in both fixtures).
+
+**Units — where the fixtures declare them** (§13.8, Table 77): both fixtures write
+`JT_PROP_MEASUREMENT_UNITS` = **"Millimeters"** — capitalized, though ISO 14306 Ed 1 says
+lowercase; the spec's own note records exactly this producer behavior and tells readers to
+accept both, so parsing is case-insensitive. The NIST file declares it 44× (every metadata
+node and part node), the 9.5 file 14× — uniformly. Scene policy: one recognized distinct
+value → that unit; none → `UNSPECIFIED` (explicit, note-free — absence is a fact, not an
+error); unrecognized values → `SCENE_UNITS_UNRECOGNIZED` per value; conflicting recognized
+values → `SCENE_UNITS_MIXED` + `UNSPECIFIED` (a single global units field cannot honestly
+hold two; the per-path precedence rule for mixed-unit files is deferred, see the table).
+
+**Material mapping** (recorded; JT Phong → scene PBR): `baseColor` = Diffuse Colour + Alpha;
+`roughness` = `sqrt(2 / (2 + shininess))` clamped to [0,1] (the standard Blinn-Phong
+exponent → microfacet roughness conversion); `metallic` = 0 — classic JT materials carry no
+metalness concept and inferring one from specular chroma would be a guess. Ambient,
+specular, emission, reflectivity and bumpiness are abstracted by design and stay visible at
+Layer 1. Accumulation follows §13.9: materials **replace** down the LSG (the shape's
+material wins over the part's — both fixtures carry both), transforms **multiply**
+(`A(child) = M(child)·A(parent)`); same-type attributes on one node accumulate in list
+order. `SceneNode.material` is the material *introduced/effective at that node*, `null` =
+inherit — replacement stays representable on shared subtrees. The Accumulation Ignore flag
+(Table 15, 0x04) is honored; force (0x02), field-final and field-inhibit flags are beyond
+the modelled semantics and produce `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED` instead of a
+silent misrepresentation (both fixtures use stateFlags = 8, persistable only, all
+inhibit/final words 0 — verified across all 213 attribute elements).
+
+**Geometry resolution**: a shape node's geometry is found through its Late Loaded Property
+Atoms whose segment type is a Shape LOD type (6–16) — resolution by segment GUID, the
+association the fixtures actually honor (DESIGN.md delta 13: object ids do not match), and
+not by the `JT_LLPROP_SHAPEIMPL` key string. The internal `buildScene(document, policy,
+resolver)` seam lets synthetic tests drive the whole walk with hand-built Layer 1 documents.
+
+**LodPolicy**: `ALL_LODS` carries one mesh/polyline set per decoded tier, finest first;
+`FINEST_ONLY` keeps the finest *decodable* tier — a failed finer tier falls back to the
+next coarser one *with* its `SCENE_GEOMETRY_UNAVAILABLE` note, so the substitution is
+visible. Range-limit-based (eye distance) selection is viewer runtime behavior, not a file
+property.
+
 ## Fixture conventions (from the amendment on issue #1)
 
 - JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
@@ -577,7 +673,10 @@ declared type) pass cross-producer for the first time.
 | Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
 | Element body parsing for meta data / PMI segments | the §11 package (LSG done issue #3, shape LOD done issue #4) |
 | v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |
-| Property-table *semantics* (units, key naming conventions, §13.8) | Layer 2 scene façade (raw carrying is done) |
+| ~~Property-table *semantics* (units, key naming conventions, §13.8)~~ | **done** (issue #7, see *Layer 2, read side*): JT_PROP_NAME, JT_PROP_MEASUREMENT_UNITS, key visibility convention, late-loaded shape resolution; other conventions (SUBNODE/reference sets, CAD/tessellation properties) stay raw at Layer 1 — their time comes with the first consumer that needs them interpreted |
+| `writeJt(scene)` — Layer 2 write side | the next milestone-2 package (issue #1: scene → tessellation + structure + names + materials; JT2Go opens the result) |
+| Per-part units precedence (lowest node wins) for mixed-unit files | first real fixture declaring conflicting units (today: `SCENE_UNITS_MIXED` + `UNSPECIFIED`, never a guess) |
+| Force/final/field-inhibit attribute accumulation in the scene | first real fixture using them (today: named note `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`; both fixtures use plain accumulation) |
 | Streaming input (not whole-file `ByteArray`) | first file too large to buffer comfortably |
 | Browser JS target | first browser consumer (ConstructIt seam) |
 | General re-layout on arbitrary mutation | Layer 1 authoring writer (single-segment payload replacement exists: `withSegmentPayload`) |

@@ -221,4 +221,80 @@ sealed class LoadNote {
         override val message: String
             get() = "LSG bytes after the element lists do not parse as a Property Table: $detail; preserved verbatim"
     }
+
+    // --- Layer 2 scene extraction notes (readScene) ---
+
+    /** No scene can be built at all: the file has no decodable LSG, or the LSG has no root. */
+    data class SceneStructureUnavailable(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_STRUCTURE_UNAVAILABLE"
+        override val message: String get() = "no scene structure could be extracted: $detail"
+    }
+
+    /**
+     * The scene tree was built, but parts of the LSG did not contribute: opaque elements,
+     * unresolvable references, cycles. The scene may be missing structure those held.
+     */
+    data class SceneStructureIncomplete(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_STRUCTURE_INCOMPLETE"
+        override val message: String get() = "the scene may be missing structure: $detail"
+    }
+
+    /** A shape node whose geometry could not be resolved; its scene node stays, empty. */
+    data class SceneGeometryUnavailable(
+        val nodeName: String,
+        val nodeObjectId: Int,
+        val segmentId: Guid?,
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_GEOMETRY_UNAVAILABLE"
+        override val message: String
+            get() =
+                "geometry of shape node #$nodeObjectId" +
+                    (if (nodeName.isNotEmpty()) " (\"$nodeName\")" else "") +
+                    (segmentId?.let { " in segment $it" } ?: "") +
+                    " is not in the scene: $detail"
+    }
+
+    /** A JT_PROP_MEASUREMENT_UNITS value outside the Table 77 value set. */
+    data class SceneUnitsUnrecognized(
+        val value: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_UNITS_UNRECOGNIZED"
+        override val message: String
+            get() = "JT_PROP_MEASUREMENT_UNITS value \"$value\" is not a Table 77 unit; ignored for the scene's units"
+    }
+
+    /** Different nodes declare different units; a single scene units field cannot hold both. */
+    data class SceneUnitsMixed(
+        val values: List<String>,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_UNITS_MIXED"
+        override val message: String
+            get() = "the file declares conflicting measurement units $values; the scene's units are UNSPECIFIED"
+    }
+
+    /**
+     * Attributes use accumulation semantics the scene extraction does not model (force /
+     * final / field-inhibit flags); the scene's transforms or materials may differ from a
+     * fully conforming traversal.
+     */
+    data class SceneAttributeSemanticsUnsupported(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED"
+        override val message: String
+            get() = "attribute accumulation flags beyond the modelled semantics: $detail; the scene applies plain accumulation"
+    }
+
+    /** One merged mesh drew from shapes with differing materials; one of them was chosen. */
+    data class SceneMaterialAmbiguous(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SCENE_MATERIAL_AMBIGUOUS"
+        override val message: String get() = "conflicting materials merged into one scene node: $detail"
+    }
 }
