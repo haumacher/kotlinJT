@@ -60,7 +60,7 @@ are tracked at section granularity with behavioral tests.
 | File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) |
 | TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) |
 | Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful |
-| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest | framing scanned everywhere; LSG element bodies decoded (§6, issue #3); shape LOD / meta data / PMI bodies stay opaque until the §7/§11 packages |
+| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere; LSG element bodies decoded (§6, issue #3); shape LOD bodies decoded for the JT 9 generation (§7, issue #4 — v10 pending LZMA); meta data / PMI bodies stay opaque until the §11 package |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -166,38 +166,46 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 
 ## §7 Shape LOD Segment
 
+All §7 rows below share one version caveat (issue #4, DESIGN.md): the **JT 9 generation's**
+wire layouts are implemented and fixture-verified (12 real tri-strip bodies: exact byte
+consumption, all stored Annex-C hashes verified); the **v10 wire layouts are hidden behind
+segment-wide LZMA in every available v10 file** and are deliberately not guessed — v10 shape
+bodies are carried opaquely with `ELEMENT_LAYOUT_UNVERIFIED` until the LZMA package makes
+them verifiable. `partial` below means exactly that split. Write = byte-identical
+re-serialization of the typed model (authoring writer is milestone 2).
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Shape LOD Segment (p.92) | — | — |  |  |
-| Shape LOD Element (p.92) | — | — |  |  |
-| Tri-Strip Set Shape LOD Element (p.92) | — | — |  |  |
-| Polyline Set Shape LOD Element (p.93) | — | — |  |  |
-| Point Set Shape LOD Element (p.93) | — | — |  |  |
-| Polygon Set LOD Element (p.94) | — | — |  |  |
-| Null Shape LOD Element (p.107) | — | — |  |  |
-| Primitive Set Shape Element (p.107) | — | — |  |  |
-| Lossless Compressed Primitive Set Data (p.109) | — | — |  |  |
-| Lossy Quantized Primitive Set Data (p.111) | — | — |  |  |
+| Shape LOD Segment (p.92) | partial | partial | ShapeLodDocumentTest, FixtureDiscoveryTest | v9 done: 12 fixture bodies typed + byte-identical round-trip; v10 opaque-with-note pending LZMA |
+| Shape LOD Element (p.92) | partial | partial | ShapeLodDocumentTest | element framing + strict-or-opaque dispatch, both generations |
+| Tri-Strip Set Shape LOD Element (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 fixture-verified incl. decoded triangles/normals; v10 pending LZMA |
+| Polyline Set Shape LOD Element (p.93) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | body layouts (TopoMesh Compressed Rep Data V1/V2) unestablished — no fixture carries one; named note |
+| Point Set Shape LOD Element (p.93) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | as above |
+| Polygon Set LOD Element (p.94) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | as above |
+| Null Shape LOD Element (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | v9 layout spec-derived (9.5 reference), not yet fixture-verified; v10 pending LZMA |
+| Primitive Set Shape Element (p.107) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | no fixture carries one; named note |
+| Lossless Compressed Primitive Set Data (p.109) | opaque | opaque |  | inside the opaque Primitive Set body |
+| Lossy Quantized Primitive Set Data (p.111) | opaque | opaque |  | inside the opaque Primitive Set body |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | — | — |  |  |
-| Fig. 82 — Polyline Set Shape LOD Element data collection (p.93) | — | — |  |  |
-| Fig. 83 — Point Set Shape LOD Element data collection (p.94) | — | — |  |  |
-| Fig. 84 — Polygon Set LOD Element data collection (p.94) | — | — |  |  |
-| Fig. 85 — Vertex Shape LOD Data collection (p.95) | — | — |  |  |
-| Fig. 86 — Base Shape LOD Data collection (p.97) | — | — |  |  |
-| Fig. 87 — TopoMesh Compressed LOD Data collection (p.97) | — | — |  |  |
-| Fig. 88 — TopoMesh LOD Data collection (p.98) | — | — |  |  |
-| Fig. 89 — TopoMesh Compressed Rep Data data collection (p.99) | — | — |  |  |
-| Fig. 90 — Quantization Parameters data collection (p.101) | — | — |  |  |
-| Fig. 91 — TopoMesh Topologically Compressed LOD Data collection (p.102) | — | — |  |  |
-| Fig. 92 — Topologically Compressed Rep Data Collection (p.103) | — | — |  |  |
-| Fig. 93 — Topologically Compressed Vertex Records data collection (p.106) | — | — |  |  |
-| Fig. 94 — Null Shape LOD Element data collection (p.107) | — | — |  |  |
-| Fig. 96 — Lossless Compressed Primitive Set Data collection (p.109) | — | — |  |  |
-| Fig. 97 — Lossy Quantized Primitive Set Data collection (p.111) | — | — |  |  |
-| Fig. 98 — Compressed params1 data collection (p.113) | — | — |  |  |
+| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 wire layout fixture-verified (DESIGN.md delta 14, incl. the reserved 12-byte tail); v10 pending LZMA |
+| Fig. 82 — Polyline Set Shape LOD Element data collection (p.93) | opaque | opaque |  | see section row |
+| Fig. 83 — Point Set Shape LOD Element data collection (p.94) | opaque | opaque |  | see section row |
+| Fig. 84 — Polygon Set LOD Element data collection (p.94) | opaque | opaque |  | see section row |
+| Fig. 85 — Vertex Shape LOD Data collection (p.95) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version + U64 bindings (Table 48 decoded), fixture-verified; v10 pending LZMA |
+| Fig. 86 — Base Shape LOD Data collection (p.97) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version, fixture-verified |
+| Fig. 87 — TopoMesh Compressed LOD Data collection (p.97) | opaque | opaque |  | the polyline/point container — no fixture carries one |
+| Fig. 88 — TopoMesh LOD Data collection (p.98) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version + I32 vertex records object id, fixture-verified |
+| Fig. 89 — TopoMesh Compressed Rep Data data collection (p.99) | opaque | opaque |  | polyline/point path; its time comes with their first fixture |
+| Fig. 90 — Quantization Parameters data collection (p.101) | done | done | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | 4×U8, identical in both generations; note DESIGN.md delta 21 (normal bits factor is not authoritative) |
+| Fig. 91 — TopoMesh Topologically Compressed LOD Data collection (p.102) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version, fixture-verified |
+| Fig. 92 — Topologically Compressed Rep Data Collection (p.103) | partial | partial | ShapeLodDocumentTest (tetrahedron + corrupt-stream refusal), FixtureDiscoveryTest | v9 fixture-verified incl. composite-hash validation and the Annex-D topology decode; v9 chunks the 8th mask context 30/30/4 (delta 20) |
+| Fig. 93 — Topologically Compressed Vertex Records data collection (p.106) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 fixture-verified; colours/texcoords/flags/aux bindings refuse with note (no fixture) |
+| Fig. 94 — Null Shape LOD Element data collection (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | v9 spec-derived, not yet fixture-verified |
+| Fig. 96 — Lossless Compressed Primitive Set Data collection (p.109) | opaque | opaque |  | inside the opaque Primitive Set body |
+| Fig. 97 — Lossy Quantized Primitive Set Data collection (p.111) | opaque | opaque |  | inside the opaque Primitive Set body |
+| Fig. 98 — Compressed params1 data collection (p.113) | opaque | opaque |  | inside the opaque Primitive Set body |
 
 
 ## §8 Precise Geometry Segment
@@ -289,52 +297,59 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 
 ## §12 Data Compression and Encoding
 
+The §12 rows implemented by the shape LOD package (issue #4) are the **JT 9 generation's**
+wire formats (fixture-verified against 12 real bodies, 506 packets, all stored hashes); the
+v10 wire variants (Figures 132–137: restructured probability contexts, Move-to-Front,
+nibbler-based bitlength, packed Deering codes) differ and are deferred to the LZMA package,
+which makes the first v10-encoded shape data readable. `partial` on a row means exactly
+that split; DESIGN.md deltas 15–21 record the differences with byte evidence.
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Data Compression and Encoding (p.154) | — | — |  |  |
-| Common Compression Data Collection Formats (p.155) | — | — |  |  |
-| Int32 Compressed Data Packet (p.155) | — | — |  |  |
-| Int64 Compressed Data Packet (p.161) | — | — |  |  |
-| Compressed Vertex Coordinate Array (p.164) | — | — |  |  |
-| Compressed Vertex Normal Array (p.165) | — | — |  |  |
-| Compressed Vertex Texture Coordinate Array (p.167) | — | — |  |  |
-| Compressed Vertex Colour Array (p.168) | — | — |  |  |
-| Compressed Vertex Flag Array (p.170) | — | — |  |  |
-| Compressed Auxiliary Fields Array (p.170) | — | — |  |  |
-| Point Quantizer Data (p.174) | — | — |  |  |
-| Texture Quantizer Data (p.175) | — | — |  |  |
-| Colour Quantizer Data (p.175) | — | — |  |  |
-| Uniform Quantizer Data (p.177) | — | — |  |  |
-| Compressed Entity List for Non-Trivial Knot Vector (p.177) | — | — |  |  |
-| Compressed Control Point Weights Data (p.180) | — | — |  |  |
-| Compressed Curve Data (p.181) | — | — |  |  |
-| Compressed CAD Tag Data (p.185) | — | — |  |  |
-| Encoding Algorithms (p.186) | — | — |  |  |
-| Uniform Data Quantization (p.186) | — | — |  |  |
-| Bitlength CODEC (p.186) | — | — |  |  |
-| Arithmetic CODEC (p.188) | — | — |  |  |
-| Deering Normal CODEC (p.193) | — | — |  |  |
+| Data Compression and Encoding (p.154) | partial | partial | Int32CdpTest, VertexArrayTest, FixtureDiscoveryTest | chapter row: JT 9 generation done, v10 variants pending LZMA |
+| Common Compression Data Collection Formats (p.155) | partial | partial | Int32CdpTest, VertexArrayTest | as above |
+| Int32 Compressed Data Packet (p.155) | partial | partial | Int32CdpTest | JT 9 "Mk. 2" packet done incl. chopper + out-of-band nesting (DESIGN.md delta 15); v10 Figure 132 layout pending LZMA |
+| Int64 Compressed Data Packet (p.161) | — | — |  | no §7 structure needs it; first consumer is the B-rep/curve data (§12.1.13+) |
+| Compressed Vertex Coordinate Array (p.164) | partial | partial | VertexArrayTest (lossless + quantized + hash refusal), FixtureDiscoveryTest | JT 9 layout done (exp/mant pairs — delta 19), stored hash verified at decode; v10 pending LZMA |
+| Compressed Vertex Normal Array (p.165) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout done (sextant/octant/theta/psi packets — delta 19); v10 packed codes pending LZMA |
+| Compressed Vertex Texture Coordinate Array (p.167) | — | — |  | no fixture declares texture bindings; typed decode refuses with a named note until one does |
+| Compressed Vertex Colour Array (p.168) | — | — |  | as above (colour bindings) |
+| Compressed Vertex Flag Array (p.170) | — | — |  | as above (vertex flag binding) |
+| Compressed Auxiliary Fields Array (p.170) | — | — |  | as above (auxiliary field binding) |
+| Point Quantizer Data (p.174) | done | done | VertexArrayTest.pointQuantizerIsThreeUniformQuantizers, FixtureDiscoveryTest | identical in both generations |
+| Texture Quantizer Data (p.175) | — | — |  | with the texture coordinate array |
+| Colour Quantizer Data (p.175) | — | — |  | with the colour array |
+| Uniform Quantizer Data (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations |
+| Compressed Entity List for Non-Trivial Knot Vector (p.177) | — | — |  | B-rep/wireframe curve data — outside §7 |
+| Compressed Control Point Weights Data (p.180) | — | — |  | as above |
+| Compressed Curve Data (p.181) | — | — |  | as above |
+| Compressed CAD Tag Data (p.185) | — | — |  | as above |
+| Encoding Algorithms (p.186) | partial | n/a: writer emits the simple encodings | Int32CdpTest, VertexArrayTest | decode side: JT 9 generation done; v10 variants pending LZMA |
+| Uniform Data Quantization (p.186) | done | n/a: writer emits lossless data | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes | inverse implemented; reconstruction convention spec-derived — the fixture stores coordinates losslessly (DESIGN.md) |
+| Bitlength CODEC (p.186) | partial | n/a: writer emits the null CODEC | Int32CdpTest.bitlengthFixedWidthDecodes, .bitlengthVariableWidthDecodes | JT 9 wire format fixture-established (DESIGN.md delta 17 — **neither spec's prose matches the wire**); v10 nibbler variant pending LZMA |
+| Arithmetic CODEC (p.188) | partial | n/a: writer emits the null CODEC | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, FixtureDiscoveryTest | implemented because the fixture demands it (codec 3 in real bodies); JT 9 contexts done, v10 Figure 133 pending LZMA |
+| Deering Normal CODEC (p.193) | partial | n/a: writer emits lossless normals | VertexArrayTest.deeringCodeConversionMatchesTheReference, FixtureDiscoveryTest | implemented because the fixture demands it (8-bit codes in all 12 bodies, hashes verified); v10 packed-code form pending LZMA |
 | LZMA compression (p.195) | — | n/a: writer emits ZLIB or none | | named refusal UNSUPPORTED_COMPRESSION in place; decoding needed once a real v10 file arrives (deferral table in DESIGN.md) |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Fig. 131 — PMI Model View Sort Orders data collection (p.154) | — | — |  |  |
-| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | — | — |  |  |
-| Fig. 133 — Int32 Probability Context (p.159) | — | — |  |  |
-| Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | — | — |  |  |
-| Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | — | — |  |  |
-| Fig. 136 — Int64 Probability Context data collection (p.163) | — | — |  |  |
-| Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | — | — |  |  |
-| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | — | — |  |  |
-| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | — | — |  |  |
-| Fig. 140 — Compressed Vertex Texture Coordinate Array data collection (p.167) | — | — |  |  |
-| Fig. 141 — Compressed Vertex Colour Array data collection (p.169) | — | — |  |  |
-| Fig. 142 — Compressed Vertex Flag Array data collection (p.170) | — | — |  |  |
-| Fig. 143 — Compressed Auxiliary Fields Array data collection (p.171) | — | — |  |  |
-| Fig. 144 — Point Quantizer Data collection (p.174) | — | — |  |  |
-| Fig. 145 — Texture Quantizer Data collection (p.175) | — | — |  |  |
-| Fig. 146 — Colour Quantizer Data collection (p.176) | — | — |  |  |
-| Fig. 147 — Uniform Quantizer Data collection (p.177) | — | — |  |  |
+| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | partial | partial | Int32CdpTest (all codec paths + hostile inputs) | JT 9 "Mk. 2" wire format (delta 15); v10 layout differs — pending LZMA |
+| Fig. 133 — Int32 Probability Context (p.159) | partial | partial | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand | JT 9 table (delta 16: symbol field, escape −2); v10 restructured it — pending LZMA |
+| Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | partial | partial | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand | as Fig. 133 |
+| Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | — | — |  | first consumer is B-rep/curve data |
+| Fig. 136 — Int64 Probability Context data collection (p.163) | — | — |  | as above |
+| Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | — | — |  | as above |
+| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | partial | partial | VertexArrayTest (lossless, quantized, hash refusal), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending LZMA |
+| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending LZMA |
+| Fig. 140 — Compressed Vertex Texture Coordinate Array data collection (p.167) | — | — |  | no fixture declares the binding; refuses with note |
+| Fig. 141 — Compressed Vertex Colour Array data collection (p.169) | — | — |  | as above |
+| Fig. 142 — Compressed Vertex Flag Array data collection (p.170) | — | — |  | as above |
+| Fig. 143 — Compressed Auxiliary Fields Array data collection (p.171) | — | — |  | as above |
+| Fig. 144 — Point Quantizer Data collection (p.174) | done | done | VertexArrayTest.pointQuantizerIsThreeUniformQuantizers, FixtureDiscoveryTest | identical in both generations |
+| Fig. 145 — Texture Quantizer Data collection (p.175) | — | — |  | with the texture coordinate array |
+| Fig. 146 — Colour Quantizer Data collection (p.176) | — | — |  | with the colour array |
+| Fig. 147 — Uniform Quantizer Data collection (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations |
 | Fig. 148 — Compressed Entity List for Non-Trivial Knot Vector data collection (p.178) | — | — |  |  |
 | Fig. 149 — Compressed Control Point Weights Data collection (p.180) | — | — |  |  |
 | Fig. 150 — Compressed Curve Data collection (p.182) | — | — |  |  |
@@ -342,7 +357,7 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 152 — NURBS Curve Control Point Weights data collection (p.184) | — | — |  |  |
 | Fig. 153 — NURBS Curve Control Points data collection (p.184) | — | — |  |  |
 | Fig. 154 — Compressed CAD Tag Data collection (p.185) | — | — |  |  |
-| Fig. 155 — Sextant Coding on the Sphere (p.194) | — | — |  |  |
+| Fig. 155 — Sextant Coding on the Sphere (p.194) | n/a | n/a |  | illustrative drawing, no byte layout (the coding itself is the Deering CODEC row) |
 
 
 ## §13 Common Data Conventions and Constructs
@@ -391,21 +406,21 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Sample bit-length / arithmetic decoder source (p.215) | — | — |  |  |
+| Sample bit-length / arithmetic decoder source (p.215) | partial | n/a: reference source, decode side only | Int32CdpTest, VertexArrayTest.deeringCodeConversionMatchesTheReference | arithmetic decoder, predictor unpacking and Deering conversion implemented per the reference (JT 9 generation); the annex's nibbler bitlength is the v10 variant — pending LZMA (the JT 9 bitlength wire differs, DESIGN.md delta 17) |
 
 
 ## Annex C — Hashing: An Implementation
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Hash function implementation (p.239) | — | — |  |  |
+| Hash function implementation (p.239) | done | done | JtHashTest, FixtureDiscoveryTest | hash32 + hash16 (Jenkins lookup2); all 36 stored hashes of the fixture's 12 shape bodies verified at decode |
 
 
 ## Annex D — Polygon Mesh Topology Coder
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Polygon mesh topology coder (p.242) | — | — |  |  |
+| Polygon mesh topology coder (p.242) | done | n/a: writer's time comes with the authoring milestone | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | decoder (dual VFMesh reconstruction) implemented; fixture-verified: all 12 bodies decode complete meshes whose counts match the LSG-declared ranges |
 
 
 ## Annex E — (deprecated) JT B-Rep Segment

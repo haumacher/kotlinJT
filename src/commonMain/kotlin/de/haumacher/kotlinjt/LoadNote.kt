@@ -197,6 +197,14 @@ sealed class LoadNote {
         override val message: String get() = "LSG element stream deviates from the Figure 20 structure: $detail"
     }
 
+    /** A Shape LOD element stream that does not have the Figure 80 structure. */
+    data class ShapeLodStructureUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "SHAPE_LOD_STRUCTURE_UNRECOGNIZED"
+        override val message: String get() = "shape LOD element stream deviates from the Figure 80 structure: $detail"
+    }
+
     /** An LSG stream that ends after its element lists without a Property Table. */
     data class PropertyTableMissing(
         val detail: String,

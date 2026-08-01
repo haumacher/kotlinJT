@@ -155,43 +155,48 @@ data class LsgDocument(
                 }
             }
         }
+    }
+}
 
-        private fun readPropertyTable(r: ByteReader): PropertyTable {
-            val version = r.readI16().toInt()
-            val count = r.readI32()
-            // Each table needs at least the element object id and the terminating key.
-            if (count < 0 || count > r.remaining / 8) {
-                throw JtFormatException("Element Property Table count $count does not fit the remaining ${r.remaining} bytes")
+/**
+ * Reads a Property Table (Figure 78) — the structure both the LSG segment and the shape LOD
+ * segments carry after their element lists (DESIGN.md observation on the 6-byte shape tail).
+ */
+internal fun readPropertyTable(r: ByteReader): PropertyTable {
+    val version = r.readI16().toInt()
+    val count = r.readI32()
+    // Each table needs at least the element object id and the terminating key.
+    if (count < 0 || count > r.remaining / 8) {
+        throw JtFormatException("Element Property Table count $count does not fit the remaining ${r.remaining} bytes")
+    }
+    val tables =
+        List(count) {
+            val elementObjectId = r.readI32()
+            val entries = mutableListOf<PropertyEntry>()
+            while (true) {
+                val key = r.readI32()
+                if (key == 0) break
+                entries.add(PropertyEntry(key, r.readI32()))
             }
-            val tables =
-                List(count) {
-                    val elementObjectId = r.readI32()
-                    val entries = mutableListOf<PropertyEntry>()
-                    while (true) {
-                        val key = r.readI32()
-                        if (key == 0) break
-                        entries.add(PropertyEntry(key, r.readI32()))
-                    }
-                    ElementPropertyTable(elementObjectId, entries)
-                }
-            return PropertyTable(version, tables)
+            ElementPropertyTable(elementObjectId, entries)
         }
+    return PropertyTable(version, tables)
+}
 
-        private fun writePropertyTable(
-            w: ByteWriter,
-            table: PropertyTable,
-        ) {
-            w.writeI16(table.version.toShort())
-            w.writeI32(table.tables.size)
-            for (elementTable in table.tables) {
-                w.writeI32(elementTable.elementObjectId)
-                for (entry in elementTable.entries) {
-                    w.writeI32(entry.keyPropertyAtomObjectId)
-                    w.writeI32(entry.valuePropertyAtomObjectId)
-                }
-                w.writeI32(0)
-            }
+/** Serializes a Property Table — the exact inverse of [readPropertyTable]. */
+internal fun writePropertyTable(
+    w: ByteWriter,
+    table: PropertyTable,
+) {
+    w.writeI16(table.version.toShort())
+    w.writeI32(table.tables.size)
+    for (elementTable in table.tables) {
+        w.writeI32(elementTable.elementObjectId)
+        for (entry in elementTable.entries) {
+            w.writeI32(entry.keyPropertyAtomObjectId)
+            w.writeI32(entry.valuePropertyAtomObjectId)
         }
+        w.writeI32(0)
     }
 }
 

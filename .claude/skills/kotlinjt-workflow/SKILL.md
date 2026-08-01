@@ -122,6 +122,11 @@ record each new one here the day it burns you):
 - **API layer**: Layer-1 preserves what Layer-2 abstracts; asserting a Layer-2 view shows
   everything Layer-1 holds is a category error (opaque segments are invisible up there, by
   design).
+- **Equality surface narrower than the model**: a damage probe that compares a *projection*
+  (the geometry, the strings) cries wolf when the flip lands in a preserved wire field
+  (object id, reserved tail) that decodes faithfully into a *different document* with an
+  identical projection. Compare the whole decoded document; "identical + no note" is the
+  only illegal outcome. (Burned 2026-08-01, ShapeProbeTest.)
 
 ## 5. The verification gate (before every commit)
 
