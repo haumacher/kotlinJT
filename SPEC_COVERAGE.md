@@ -66,7 +66,7 @@ are tracked at section granularity with behavioral tests.
 | File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
-| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere (incl. the 59 LZMA-inflated NIST streams); LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded in both generations (§7 — JT 9 via issue #4, v10 via issue #6); meta data / PMI bodies stay opaque until the §11 package |
+| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere (incl. the 59 LZMA-inflated NIST streams); LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded in both generations (§7 — JT 9 via issue #4, v10 via issue #6); meta data / PMI element bodies decoded (§11, issue #9 — 44 NIST segments, both element types); B-rep, wireframe and LWPA bodies remain undecoded |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -265,48 +265,70 @@ of one closed component per triangle (§7.1.4.1.3.1's cover-face mechanism — D
 
 ## §11 Meta Data Segment
 
+Read-side complete for the **v10 generation** against the NIST 10.5 fixture's 44 §11 segments —
+30 Meta Data (one Property Proxy element each) and 14 PMI Data (one PMI Manager each, Table 6
+type 3, which Annex H says to parse identically). All decode typed with byte-identical
+round-trip; every layout claim below is fixture-verified unless the Notes column says
+otherwise. Deltas 32–36 in DESIGN.md record where the 10.5 bytes contradict or complete the
+10.0 text. The **v9 fixture carries no §11 segment at all**, so v9 rests on the v9.5
+reference: the Property Proxy element decodes (its Figure 134 is the v10 layout with an I16
+version — delta 6), the PMI Manager does not (a different structure; opaque-with-note).
+
+Two figure rows are **added** here that the mechanical TOC extraction missed — *Fig. 108
+Property Proxy Meta Data Element* and *Fig. 119 Generic PMI Entity*, both printed without the
+space after the em dash that the generator keyed on ("Figure 108 —Property…"). Nothing was
+deleted (discipline 3); *Fig. 131 PMI Model View Sort Orders* stays where the generator filed
+it, under §12, with a pointer back here.
+
+The **Write column is `—` throughout by design**: `writeJt` authors no meta data segments (a
+file without them is legal), so no §11 figure is *authored*. Where a row says `done` the write
+side is the byte-identical re-serialization of the decoded model, which is what the round-trip
+assertions prove; the authoring deferral and its condition are in DESIGN.md's table.
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Meta Data Segment (p.123) | — | — |  |  |
-| Property Proxy Meta Data Element (p.123) | — | — |  |  |
-| Date Property Value (p.125) | — | — |  |  |
-| PMI Manager Meta Data Element (p.126) | — | — |  |  |
-| PMI Design Group Entities (p.128) | — | — |  |  |
-| PMI Associations (p.130) | — | — |  |  |
-| PMI User Attributes (p.133) | — | — |  |  |
-| PMI String Table (p.133) | — | — |  |  |
-| PMI Model Views (p.134) | — | — |  |  |
-| Generic PMI Entities (p.139) | — | — |  |  |
-| PMI CAD Tag Data (p.149) | — | — |  |  |
-| PMI Polygon Data (p.150) | — | — |  |  |
-| PMI Properties (p.153) | — | — |  |  |
-| PMI Model View Sort Orders (p.154) | — | — |  |  |
+| Meta Data Segment (p.123) | done | — | MetaDataDocumentTest, MetaDataFixtureTest, FixtureDiscoveryTest | chapter row; 44 fixture segments typed, element-stream round-trip byte-identical, each closing with the Figure-78 empty property table. Write: re-serialization only — `writeJt` emits no meta data |
+| Property Proxy Meta Data Element (p.123) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType, MetaDataFixtureTest | fixture-verified (30 bags, 151 properties, 21 keys); decodes in all three generations (v9 per the v9.5 Figure 134 + delta 6); an unknown Table 53 value type keeps the decoded prefix and the raw remainder with a named note |
+| Date Property Value (p.125) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType | spec-derived: no fixture bag carries a Date value (the LSG's Date Property Atom does). Modelled as `JtDate`'s six raw I16 fields — `commonMain` stays platform-free |
+| PMI Manager Meta Data Element (p.126) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | everything Figure 110 documents through the font block decodes and is fixture-verified on all 14 managers; the block NX 10.5 writes *after* the fonts is undocumented (delta 33) and carried verbatim with `PMI_MANAGER_TAIL_UNDOCUMENTED`. v9 layout unestablished (v9.5 Figure 136 differs; no fixture) — opaque-with-note |
+| PMI Design Group Entities (p.128) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips | spec-derived: all 14 fixture managers declare zero design groups, so only the count is fixture-verified; the group/attribute layout comes from Figures 111/112 and is exercised by the hand-built test |
+| PMI Associations (p.130) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (1 288 associations across the 14 managers); Table 55's packed words exposed as bit fields, Table 55/56 value sets *not* validated — the fixture writes types those tables omit |
+| PMI User Attributes (p.133) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips | spec-derived: the fixture declares zero user attributes (count fixture-verified) |
+| PMI String Table (p.133) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; every String ID of every sub-collection is validated against it at decode |
+| PMI Model Views (p.134) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (89 model views, each with its own PMI Property list) |
+| Generic PMI Entities (p.139) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (403 entities: dimensions, notes, sections, reference geometry, part transforms — including populated 2D frames, text entities and non-text polylines) |
+| PMI CAD Tag Data (p.149) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | the index list is fixture-verified and its count validated against the §11.2.7 formula on all 14 managers; the nested Compressed CAD Tag Data has its framing decoded (delta 34) and its entropy-coded vectors kept verbatim — decoding them needs the Int64 CDP (deferred, see DESIGN.md) |
+| PMI Polygon Data (p.150) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified for the manager's own block and for all five fonts' glyph outlines (one PolygonData element per character); colour/texture bindings never occur in the fixture — their conditional arrays are spec-derived |
+| PMI Properties (p.153) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | the *segment-level* property list sits inside the undocumented tail (delta 33) — the PMI Property collection itself is `done` (Fig. 117/118) via model views and generic entities. Its time comes with a fixture whose Property Count is non-zero |
+| PMI Model View Sort Orders (p.154) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | inside the same undocumented tail; all 14 fixture managers would have to declare a non-zero count to pin its position |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 106 — Wireframe Rep CAD Tag Data collection (p.123) | — | — |  |  |
-| Fig. 107 — Meta Data Segment data collection (p.123) | — | — |  |  |
-| Fig. 109 — Date Property Value data collection (p.125) | — | — |  |  |
-| Fig. 110 — PMI Manager Meta Data Element data collection (p.127) | — | — |  |  |
-| Fig. 111 — PMI Design Group Entities data collection (p.128) | — | — |  |  |
-| Fig. 112 — Design Group Attribute data collection (p.129) | — | — |  |  |
-| Fig. 113 — PMI Associations data collection (p.131) | — | — |  |  |
-| Fig. 114 — PMI User Attributes data collection (p.133) | — | — |  |  |
-| Fig. 115 — PMI String Table data collection (p.134) | — | — |  |  |
-| Fig. 116 — PMI Model Views data collection (p.135) | — | — |  |  |
-| Fig. 117 — PMI Property data collection (p.137) | — | — |  |  |
-| Fig. 118 — Key PMI Property Atom data collection (p.138) | — | — |  |  |
-| Fig. 120 — PMI 2D Data collection (p.142) | — | — |  |  |
-| Fig. 121 — PMI Base Data collection (p.142) | — | — |  |  |
-| Fig. 122 — 2D-Reference Frame data collection (p.143) | — | — |  |  |
-| Fig. 123 — 2D Text Data collection (p.144) | — | — |  |  |
-| Fig. 124 — Text Box data collection (p.145) | — | — |  |  |
-| Fig. 125 — Constructing Text Polylines from data arrays (p.146) | — | — |  |  |
-| Fig. 126 — Text Polyline Data collection (p.146) | — | — |  |  |
-| Fig. 127 — Constructing Non-Text Polylines from packed 2D data arrays (p.147) | — | — |  |  |
-| Fig. 128 — Non-Text Polyline Data collection (p.148) | — | — |  |  |
-| Fig. 129 — PMI CAD Tag Data collection (p.149) | — | — |  |  |
-| Fig. 130 — PMI Polygon Data (p.151) | — | — |  |  |
+| Fig. 106 — Wireframe Rep CAD Tag Data collection (p.123) | — | — |  | belongs to §10 (Wireframe), not yet started |
+| Fig. 107 — Meta Data Segment data collection (p.123) | done | — | MetaDataDocumentTest (structure + hostile paths), MetaDataFixtureTest | element list + the Figure-78 trailer; unterminated streams and unknown element types produce named notes and keep their bytes |
+| Fig. 108 — Property Proxy Meta Data Element data collection (p.124) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType, .duplicateBagKeysArePreservedInOrder, .unknownPropertyValueTypeKeepsTheDecodedPrefixAndTheRawRemainder | fixture-verified in all three generations' shared layout; duplicate keys preserved in wire order |
+| Fig. 109 — Date Property Value data collection (p.125) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType | spec-derived (no fixture bag carries a Date) |
+| Fig. 110 — PMI Manager Meta Data Element data collection (p.127) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, .undocumentedBytesAfterTheFontBlockAreNamedAndPreserved, MetaDataFixtureTest | figure order confirmed against the bytes through the font block; the post-font block is undocumented (delta 33) |
+| Fig. 111 — PMI Design Group Entities data collection (p.128) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips | spec-derived beyond the count (fixture declares zero) |
+| Fig. 112 — Design Group Attribute data collection (p.129) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips | all three Table 54 value types; spec-derived (no fixture attribute) |
+| Fig. 113 — PMI Associations data collection (p.131) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified |
+| Fig. 114 — PMI User Attributes data collection (p.133) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips | spec-derived beyond the count (fixture declares zero) |
+| Fig. 115 — PMI String Table data collection (p.134) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest, .aStringIdOutsideTheStringTableRefuses | fixture-verified; out-of-range String IDs refuse the typed decode |
+| Fig. 116 — PMI Model Views data collection (p.135) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (89 views) |
+| Fig. 117 — PMI Property data collection (p.137) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (thousands of key/value atoms on views and generic entities) |
+| Fig. 118 — Key PMI Property Atom data collection (p.138) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, .aHiddenFlagOutsideTable59Refuses, MetaDataFixtureTest | **delta 32**: the Hidden Flag is one byte in 10.5, not the documented U32; 10.0–10.4 keep the U32. Non-Table-59 values refuse |
+| Fig. 119 — Generic PMI Entity data collection (p.139) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (403 entities); Table 60 entity/parent types carried as read — the fixture writes values the table omits |
+| Fig. 120 — PMI 2D Data collection (p.142) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | **delta 35**: the figure's unlabeled last box is Non-Text Polyline Data — fixture-confirmed |
+| Fig. 121 — PMI Base Data collection (p.142) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; 2D-Frame Flag 2 comes with a *populated* frame in the fixture, so the flag is preserved and not interpreted |
+| Fig. 122 — 2D-Reference Frame data collection (p.143) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified |
+| Fig. 123 — 2D Text Data collection (p.144) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; Table 62 font values carried as read (the fixture writes −1) |
+| Fig. 124 — Text Box data collection (p.145) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified |
+| Fig. 125 — Constructing Text Polylines from data arrays (p.146) | n/a | n/a |  | illustrative drawing of Fig. 126's arrays, no byte layout |
+| Fig. 126 — Text Polyline Data collection (p.146) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | **delta 36**: the coordinate VecF32 is on the wire even when the index count is 0 |
+| Fig. 127 — Constructing Non-Text Polylines from packed 2D data arrays (p.147) | n/a | n/a |  | illustrative drawing of Fig. 128's arrays, no byte layout |
+| Fig. 128 — Non-Text Polyline Data collection (p.148) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; the 2D-vs-3D packing of the coordinates is left to the consumer (the flat array is the model) |
+| Fig. 129 — PMI CAD Tag Data collection (p.149) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, .aCadTagIndexCountThatContradictsTheEntityCountsRefuses, MetaDataFixtureTest | index list fixture-verified and validated against the §11.2.7 count formula; the nested Compressed CAD Tag Data's coded vectors stay verbatim (Fig. 154 row) |
+| Fig. 130 — PMI Polygon Data (p.151) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified incl. the parallel binding/dimension vectors and empty elements; colour/texture arrays spec-derived (no fixture binds them) |
 
 
 ## §12 Data Compression and Encoding
@@ -337,7 +359,7 @@ the NIST bytes contradict or complete the v10 text.
 | Compressed Entity List for Non-Trivial Knot Vector (p.177) | — | — |  | B-rep/wireframe curve data — outside §7 |
 | Compressed Control Point Weights Data (p.180) | — | — |  | as above |
 | Compressed Curve Data (p.181) | — | — |  | as above |
-| Compressed CAD Tag Data (p.185) | — | — |  | as above |
+| Compressed CAD Tag Data (p.185) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | reached first by PMI CAD Tag Data (§11, issue #9): the framing is decoded and its Data Length convention established (DESIGN.md delta 34); the entropy-coded tag vectors stay verbatim until the Int64 CDP has a consumer |
 | Encoding Algorithms (p.186) | done | n/a: writer emits the simple encodings | Int32CdpTest, Int32CdpV10Test, VertexArrayTest | decode side: both generations fixture-verified |
 | Uniform Data Quantization (p.186) | done | n/a: writer emits lossless data | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | inverse implemented; since issue #6 fixture-exercised (the NIST LOD1/2 coordinates are quantized at 9–17 bits and land inside their shape nodes' boxes) |
 | Bitlength CODEC (p.186) | done | n/a: writer emits the null CODEC | Int32CdpTest.bitlengthFixedWidthDecodes, .bitlengthVariableWidthDecodes, Int32CdpV10Test.bitlengthFixedWidthDecodesWithNibbledMinMax, .bitlengthVariableWidthDecodesWithFourBitBlocks | JT 9 wire format fixture-established (delta 17 — **neither spec's prose matches that wire**); v10 nibbler/4-bit-block variant per Annex B, verified on 696 NIST packets |
@@ -347,7 +369,7 @@ the NIST bytes contradict or complete the v10 text.
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 131 — PMI Model View Sort Orders data collection (p.154) | — | — |  |  |
+| Fig. 131 — PMI Model View Sort Orders data collection (p.154) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | a §11 figure (the TOC filed it here); it sits inside the PMI Manager's undocumented post-font block — DESIGN.md delta 33 |
 | Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | done | done | Int32CdpTest, Int32CdpV10Test (all codec paths + hostile inputs), FixtureDiscoveryTest | JT 9 "Mk. 2" (delta 15) and v10 third-generation wire formats, both fixture-verified; out-of-band packet conditional on the escape entry (delta 28) | **Write: authored by `writeJt`** — the null CODEC (Table 64 value 0) is the packet form the writer emits (WriteJtTest.authoredTopologyIsOneClosedComponentPerTriangle).
 | Fig. 133 — Int32 Probability Context (p.159) | done | done | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, Int32CdpV10Test | JT 9 table (delta 16: symbol field, escape −2) and v10 table (escape flag, 7-bit value width) |
 | Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | done | done | Int32CdpV10Test (escape + escapeless vectors) | as Fig. 133 |
@@ -370,7 +392,7 @@ the NIST bytes contradict or complete the v10 text.
 | Fig. 151 — Non-Trivial Knot Vector NURBS Curve Indices data collection (p.184) | — | — |  |  |
 | Fig. 152 — NURBS Curve Control Point Weights data collection (p.184) | — | — |  |  |
 | Fig. 153 — NURBS Curve Control Points data collection (p.184) | — | — |  |  |
-| Fig. 154 — Compressed CAD Tag Data collection (p.185) | — | — |  |  |
+| Fig. 154 — Compressed CAD Tag Data collection (p.185) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | framing fixture-verified on all 14 PMI managers (delta 34); CAD Tag Types / Type-1 / Type-2 vectors carried verbatim (Int64 CDP deferred) |
 | Fig. 155 — Sextant Coding on the Sphere (p.194) | n/a | n/a |  | illustrative drawing, no byte layout (the coding itself is the Deering CODEC row) |
 
 
@@ -389,7 +411,7 @@ the NIST bytes contradict or complete the v10 text.
 | Scene graph construction (p.197) | done | done | SceneReadTest, SceneFixtureTest, SceneNistFixtureTest, WriteJtTest, WriteFixtureRewriteTest | the Layer 2 walk: partition root, instance sharing (shared scene objects), group/metadata structure; `writeJt` is its inverse — instanced subtrees round-trip as shared objects  |
 | Metadata Conventions (p.198) | partial | partial | SceneReadTest, SceneFixtureTest, WriteJtTest | the name/units conventions are interpreted and authored (rows below); all other properties are carried as Layer 1 atoms, uninterpreted and not invented on write  |
 | Property Key Naming Conventions (p.198) | done | done | SceneReadTest (hidden vs. visible key forms), SceneFixtureTest, WriteJtTest | hidden `key` and visible `key::` accepted as one key, case-sensitive otherwise; the writer emits the hidden form  |
-| PMI Properties (p.199) | — | — |  | with the PMI package (§11) |
+| PMI Properties (p.199) | partial | — | MetaDataFixtureTest, MetaDataDocumentTest | the PMI Property key/value atoms are read verbatim at Layer 1 (§11, issue #9); the Annex's semantic table (anchor points, colours, transformation matrices encoded into the value strings) is deliberately *not* parsed — that interpretation's time comes with a consumer, see DESIGN.md's deferral table |
 | CAD Properties (p.199) | partial | partial | SceneReadTest (units battery), SceneFixtureTest, SceneNistFixtureTest, WriteJtTest.undeclaredUnitsAreRefused | JT_PROP_MEASUREMENT_UNITS (the required property) interpreted case-insensitively per the spec's own producer note — both fixtures write "Millimeters", which is what the writer emits; a scene without units is refused rather than defaulted; the other CAD properties pass through as Layer 1 atoms  |
 | Tessellation Properties (p.201) | — | — |  | carried raw at Layer 1 (Chordal/Angular/SegLength observed on the NIST fixture) |
 | Miscellaneous Properties (p.202) | partial | partial | SceneReadTest.nameEncodingIsDecodedAndPlainNamesPassVerbatim, SceneNistFixtureTest, WriteJtTest | JT_PROP_NAME incl. the `Name;version;instance:` encoded form interpreted (both fixtures use it); the writer emits the plain name form; the other miscellaneous keys pass through  |

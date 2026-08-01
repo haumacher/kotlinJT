@@ -205,6 +205,46 @@ sealed class LoadNote {
         override val message: String get() = "shape LOD element stream deviates from the Figure 80 structure: $detail"
     }
 
+    /** A Meta Data / PMI Data element stream that does not have the Figure 107 structure. */
+    data class MetaDataStructureUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "META_DATA_STRUCTURE_UNRECOGNIZED"
+        override val message: String get() = "meta data element stream deviates from the Figure 107 structure: $detail"
+    }
+
+    /**
+     * A Property Proxy property carries a Property Value Type outside Table 53. Its length is
+     * unknown, so the property bag cannot continue past it: the keys decoded so far stay in
+     * the model and every remaining byte is preserved verbatim next to the refusal.
+     */
+    data class MetaPropertyValueTypeUnknown(
+        val location: String,
+        val key: String,
+        val typeCode: Int,
+    ) : LoadNote() {
+        override val name: String get() = "META_PROPERTY_VALUE_TYPE_UNKNOWN"
+        override val message: String
+            get() =
+                "$location: property \"$key\" declares Property Value Type $typeCode, which Table 53 does not define; " +
+                    "the rest of the bag is preserved verbatim"
+    }
+
+    /**
+     * A PMI Manager Meta Data Element carries bytes after its font block that Figure 110 does
+     * not account for (NX 10.5 writes such a block — DESIGN.md delta 32). They are preserved
+     * verbatim rather than read as the Property Count / PMI Properties / Model View Sort
+     * Orders the figure places there, which they demonstrably are not.
+     */
+    data class PmiManagerTailUndocumented(
+        val location: String,
+        val byteCount: Int,
+    ) : LoadNote() {
+        override val name: String get() = "PMI_MANAGER_TAIL_UNDOCUMENTED"
+        override val message: String
+            get() = "$location: $byteCount bytes after the PMI font block are not documented by Figure 110; preserved verbatim"
+    }
+
     /** An LSG stream that ends after its element lists without a Property Table. */
     data class PropertyTableMissing(
         val detail: String,

@@ -17,6 +17,9 @@ import de.haumacher.kotlinjt.lsg.TypedLsgElement
 import de.haumacher.kotlinjt.lsg.decodeLsg
 import de.haumacher.kotlinjt.lsg.encodeLsgSegmentPayload
 import de.haumacher.kotlinjt.lsg.lsgSegment
+import de.haumacher.kotlinjt.meta.MetaDataDocument
+import de.haumacher.kotlinjt.meta.OpaqueMetaDataElement
+import de.haumacher.kotlinjt.meta.metaDataSegments
 import de.haumacher.kotlinjt.shape.OpaqueShapeLodElement
 import de.haumacher.kotlinjt.shape.PolylineGeometry
 import de.haumacher.kotlinjt.shape.ShapeLodDocument
@@ -291,6 +294,26 @@ class FixtureDiscoveryTest {
                             elementData.toByteArray(),
                             result.document.encode(file.header.byteOrder).toByteArray(),
                             "${segment.tocEntry.segmentId}: encode(decode(shape body)) drifted",
+                        )
+                    }
+                },
+                dynamicTest("meta data / PMI bodies decode typed-or-noted and round-trip byte-identically") {
+                    val file = JtFile.parse(bytes)
+                    val decodable = file.metaDataSegments().filter { it.elementData != null }
+                    assumeTrue(decodable.isNotEmpty(), "no decodable meta data / PMI segments in this fixture")
+                    for (segment in decodable) {
+                        val elementData = segment.elementData!!
+                        val result = MetaDataDocument.decode(elementData, file.header.version, file.header.byteOrder)
+                        // Zero unnamed refusals: every opaque element is covered by a note.
+                        val opaque = result.document.elements.count { it is OpaqueMetaDataElement }
+                        assertTrue(
+                            opaque <= result.notes.size,
+                            "${segment.tocEntry.segmentId}: $opaque opaque elements, ${result.notes.size} notes — a silent refusal",
+                        )
+                        assertArrayEquals(
+                            elementData.toByteArray(),
+                            result.document.encode(file.header.byteOrder).toByteArray(),
+                            "${segment.tocEntry.segmentId}: encode(decode(meta data body)) drifted",
                         )
                     }
                 },

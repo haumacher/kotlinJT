@@ -502,8 +502,9 @@ depends on re-compression.
 **What the 59 segments contained** (all inflate, all element-scan cleanly, each ending in
 the Figure-78 six-byte empty property table except the LSG, which carries a real one): the
 LSG (13 KB → 90 736 bytes), 14 PMI Data, 30 Meta Data, 8 XT B-Rep, 5 Wireframe, 1 MultiXT
-B-Rep. Meta data / PMI / B-rep element *bodies* remain opaque per plan (§11 package;
-B-rep opaque by doctrine).
+B-Rep. The 44 meta data / PMI bodies decode typed since issue #9 (see *Layer 1: Meta data and
+PMI*); the B-rep and wireframe bodies remain opaque — B-rep by doctrine, wireframe pending its
+own package.
 
 ## v10.0 vs 10.5 LSG element deltas (established, with byte evidence from the NIST fixture)
 
@@ -813,6 +814,150 @@ only after an external consumer (JT2Go) opens them — the README lists exactly 
 including the cover-face question, since a reader that ignored the Vertex Flags convention would
 show doubled inward-facing triangles.
 
+## Layer 1: Meta data and PMI (issue #9)
+
+**The fixture inventory that decided this package.** The 9.5 file carries **no §11 segments at
+all** — no Meta Data, no PMI Data — so every layout below rests on the NIST 10.5 file, which
+carries 44: **30 Meta Data segments** (Table 6 type 4, each holding exactly one *Property Proxy
+Meta Data Element*, all referenced by a `JT_LLPROP_METADATA` late-loaded atom on a Meta Data
+Node or Part Node) and **14 PMI Data segments** (type 3, each holding exactly one *PMI Manager
+Meta Data Element*, all referenced by `JT_LLPROP_PMI`). All 44 are LZMA-compressed and all 44
+end, after the end-of-elements marker, in the same six-byte empty Property Table (Figure 78)
+the shape segments carry — a third producer/segment-kind confirmation of that identification.
+
+**One model for two segment kinds.** §11 is titled *Meta Data Segment*, and Annex A lists both
+element types under segment type 4 — but NX writes its PMI Managers into type-3 *PMI Data*
+segments, which Annex H deprecates while stating that "a PMI Data Segment should be treated
+exactly the same as a PMI Manager Meta Data Element". `MetaDataDocument`
+(`de.haumacher.kotlinjt.meta`) therefore serves both kinds: element list + Figure-78 property
+table + preserved remainder, the same seam as `LsgDocument` and `ShapeLodDocument`, with
+`decode` → `encode` byte-identical for decoded and opaquely carried elements alike.
+
+**The property bag** (`PropertyProxyMetaDataElement`, Figure 108) is an *ordered list* of
+`MetaProperty(key, value)` — duplicate keys are legal on the wire and preserved; `propertyMap`
+is a lookup projection (first wins), never the storage. `MetaPropertyValue` is a sealed
+hierarchy over Table 53: `None` (type 0), `Text`, `Integer`, `Real`, `Date` and
+`Unrecognized`. `JtDate` (Figure 109) stores the six raw I16 fields — `commonMain` is
+platform-free and the spec fixes no calendar, zone or validity rules for them. A **value type
+outside Table 53 has unknown length**, so the bag cannot continue past it: the property list
+keeps everything decoded so far, the offending property carries `Unrecognized(typeCode,
+remainder)` with *every* remaining byte of the body, and `META_PROPERTY_VALUE_TYPE_UNKNOWN`
+names it. That is the one deliberate exception to "no half-decoded element" in this package —
+re-serialization stays a projection (fields + verbatim bytes), and refusing the whole element
+would throw away the keys a real file does describe.
+
+**The PMI Manager** (`PmiManagerMetaDataElement`, Figure 110) decodes every sub-collection
+Figure 110 documents up to and including the font block: Design Group Entities with all three
+Table-54 attribute value types (Figures 111/112), Associations with Table 55's packed
+source/destination words exposed as bit-field accessors (Figure 113), User Attributes
+(Figure 114), the String Table every String ID indexes into (Figure 115), Model Views with
+their PMI Properties (Figures 116–118), Generic PMI Entities with the whole 2D stack — base
+data, 2D-reference frame, 2D text, text box, text polylines, non-text polylines (Figures
+119–128) — PMI Polygon Data (Figure 130), the CAD Tags Flag with PMI CAD Tag Data (Figure 129)
+and per-font name / character set / glyph outlines. What follows the fonts is **carried
+verbatim** (delta 33). Compressed CAD Tag Data (Figure 154) has its framing decoded and its
+entropy-coded tag vectors kept as bytes: reading them needs the Int64 CDP, which no structure
+has required yet (see the deferral table) — the collection's own Data Length makes the extent
+exact, so nothing is guessed and nothing is lost.
+
+**Why the undocumented tail cannot silently hide a misread.** Absorbing trailing bytes removes
+the strict full-consumption check that protects every other Layer 1 decode, so the PMI Manager
+decode *validates values* instead: every String ID must be −1 or a real index into the String
+Table; every Hidden Flag must be a Table 59 value; PMI Polygon Data's parallel vectors must
+have exactly 3 and 1 entries per non-empty element; and the CAD Tag Index Count must equal the
+§11.2.7 formula's sum (design groups + model views + generic entities in the v10 wire — exact
+in all 14 bodies). Any of these failing refuses the typed decode. Deliberately *not* validated:
+Table 55 entity types, Table 56 reason codes and Table 60 entity/parent types — the fixture
+writes values those tables omit (entity types `0x0310` and `0x030C`, source type 23), so the
+value sets are open and the numbers are carried as read.
+
+**Generation policy.** The Property Proxy element decodes in all three generations: the v9.5
+reference's own Figure 134 shows the identical layout with only the version field's width
+differing (delta 6), so v9 is spec-derived from *its own generation's spec*, not derived from
+v10. The PMI Manager's v9 layout is a genuinely different structure (the v9.5 Figure 136 adds a
+PMI Version Number and a reserved field, gates sub-collections on it, and lists per-entity-type
+collections v10 dropped) and no v9 fixture carries one, so it is opaque-by-policy in V9 with
+`ELEMENT_LAYOUT_UNVERIFIED` — never guessed. Between V10 and V10_5 only the Hidden Flag width
+differs (delta 32); 10.0–10.4 keep the documented layout, as with the LSG deltas 23–26.
+
+**Layer 1 only.** No scene-façade change: `readScene` neither reads nor is affected by §11
+(pinned by `MetaDataProbeTest.theSceneFacadeIsUnaffectedByTypedMetaData`), and `writeJt` still
+emits no meta data segments. Both are recorded deferrals with their conditions.
+
+## v10.5 meta data / PMI wire format (established, with byte evidence from the NIST fixture)
+
+Continuing the delta numbering. As with the shape deltas, no 10.0 fixture exists, so
+"10.5 delta" and "10.0 documentation gap" cannot be distinguished; each entry says which
+reading the evidence supports.
+
+32. **Key PMI Property Atom: the Hidden Flag is one byte, not Figure 118's U32.** Evidence:
+    every PMI property of the NIST fixture (Model View and Generic PMI Entity properties across
+    all 14 managers) parses to exact length only with a U8 flag; read as U32 the following
+    MbString's character count comes out as 0x00000A00. Both flag values occur (a Model View's
+    `GeneralAttribute[0]` value atom is hidden, its key is not), so the field is a flag and not
+    padding. 10.0–10.4 keep the documented U32; a producer that disagrees falls to the
+    validation above (opaque carry + named note), never to a misread.
+33. **PMI Manager bodies carry a block after the font loop that Figure 110 does not describe.**
+    Evidence: all 14 bodies leave bytes after the fonts — exactly 16 in the nine PMI-light ones
+    (four zero U32s) and 1 873 / 4 633 / 7 567 / 9 011 / 9 494 in the five that carry fonts.
+    Figure 110 places `U32 Property Count` + PMI Properties + PMI Model View Sort Orders there.
+    The first two U32s are zero in all 14, which is consistent with both counts being zero —
+    but the *rest* of the block is a structure neither the 10.0 nor the 9.5 reference documents
+    (in the large bodies it holds 20-byte records shaped exactly like PMI Associations, and
+    ascending index arrays sized neither like the entity nor the string counts), so the
+    boundary is not independently pinned. Reading the two counts would be a claim the bytes
+    cannot confirm; the whole block is therefore carried verbatim in
+    `PmiManagerMetaDataElement.undocumentedTail` with `PMI_MANAGER_TAIL_UNDOCUMENTED`. Its
+    time comes with a fixture whose Property Count or Sort Order Count is non-zero, or with
+    documentation of the trailing structure (see the deferral table).
+34. **Compressed CAD Tag Data's Data Length counts from the Data Length field itself.**
+    Figure 154 says only that a reader "may use this information to compute the end position".
+    Evidence: in all 14 bodies `offset(Data Length) + Data Length` lands exactly on the next
+    field (the U32 Font Count) — e.g. a 58-byte length covering the field, the inner I32
+    version and 50 bytes of coded vectors. Counting from the collection start or from after the
+    field misses by 1 and 4 bytes respectively.
+35. **Figure 120's unlabeled last box is Non-Text Polyline Data.** The reference draws a fourth,
+    empty rounded box at the end of PMI 2D Data; §11.2.6.1.3 places Non-Text Polyline Data
+    inside PMI 2D Data without saying where, and the bytes settle it: every Generic PMI Entity
+    of the fixture carries four index/type/width/coordinate arrays exactly there.
+36. **Text Polyline Data's `VecF32 Polyline Vertex Coords` is unconditional.** Figure 126 gates
+    only the *index* loop on `Polyline Segment Index Count > 0`. Evidence: the fixture's 2D Text
+    Data records are a fixed 48 bytes when a text has no polylines — 40 bytes of scalars plus
+    *two* zero counts — so the coordinate vector is written even when empty (verified across
+    every text entity of all 14 bodies; the largest body's 17 texts of one dimension are spaced
+    exactly 48 bytes apart).
+
+Recorded observations from the same evidence:
+
+- **NX 10.5 writes PMI into deprecated type-3 segments.** Annex H says PMI Data Segments
+  "should not be written to JT files"; the current Siemens writer writes 14 of them, all
+  referenced by `JT_LLPROP_PMI` atoms declaring segment type 3. Reading broadly means serving
+  both kinds (issue #1's version policy).
+- **PMI Manager version 2 is what NX 10.5 writes** (Figure 110's U8 Version Number); the v9.5
+  reference names 1 and 2 as the valid values for its own generation's I16 field.
+- **2D-Frame Flag 2 does not mean a dummy frame in practice.** §11.2.6.1.1 says flag 2 means
+  "dummy (i.e. all zeros) 2D-Reference Frame data is written"; every Generic PMI Entity of the
+  fixture writes flag 2, and the dimension entities' frames are fully populated. The flag is
+  preserved, not interpreted. Quantified by the probe review (PmiWorldProbeTest): 206 of the
+  403 frames are the spec's all-zero dummies, 197 are populated — under the same flag value —
+  and every populated frame sits inside the partition's world box with non-degenerate axes.
+- **Model View cameras are geometrically coherent but carry no viewport diameter**: all 89
+  views write `viewportDiameter = 0.0` (unset), while eye direction equals the normalized
+  eye→target vector on every view and the named standard views ("Top", "Front", "Right"…)
+  carry exactly the axis-aligned directions their names promise (PmiWorldProbeTest) — the
+  strongest fixture evidence that Figure 116 decodes at the right offsets.
+- **Font glyph counts match their character sets exactly** — all five fonts define one
+  PolygonData element per character identifier (19, 23, 24, 36 and 44), which is what the
+  fixture battery asserts.
+- **What the 30 property bags actually contain**: 151 properties over 21 distinct keys, 148 of
+  them `Text` and 3 `Integer` — `Name::`, `LAYER::`, `CAD Source::`, `CAD_DENSITY::`,
+  `CAD_MATERIAL::`, `CAD_MASS_UNITS::`, `CAD_VOLUME::`, `CAD_YOUNGS_MODULUS::`,
+  `Translator Version::`, `JT_PROP_MEASUREMENT_UNITS::`, `AdvCompressLODLevel::`,
+  `LAYERFILTER000::`…`006::`, `PMI_TYPE_TABLE`, `TOOLKIT_CUSTOMER` and
+  `__PLM_PS_OCC_RelRoot` (the one Integer key, value 1). No `Date` and no type-0 value occurs
+  in either fixture, so those two Table 53 rows are exercised only by the hand-built per-figure
+  test — recorded honestly rather than claimed fixture-verified.
+
 ## Fixture conventions (from the amendment on issue #1)
 
 - JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
@@ -841,7 +986,12 @@ show doubled inward-facing triangles.
 | LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than plain storage permits — note Table 8/9 leave *no other* v10 choice: ZLIB is a JT 9 value, so "stored" is the only legal alternative (issue #1 policy: simplest legal encodings) |
 | Point/Polygon/Primitive Set Shape LOD bodies; Polyline Set in the JT 9 generation | first fixture carrying them (the NIST polylines settled the v10 Polyline layout — issue #6; no fixture shows the others) |
 | Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
-| Element body parsing for meta data / PMI segments | the §11 package (LSG done issue #3, shape LOD done issue #4) |
+| ~~Element body parsing for meta data / PMI segments~~ | **done** (issue #9, see *Layer 1: Meta data and PMI*): all 44 Meta Data / PMI Data segments of the NIST fixture decode typed, byte-identical round-trip, cross-checked against the LSG's late-loaded references |
+| The undocumented block NX 10.5 writes after a PMI Manager's fonts (delta 33) — and with it Figure 110's segment-level `Property Count` / PMI Properties and Figure 131's Model View Sort Orders | a fixture whose Property Count or Model View Sort Order Count is non-zero, or documentation of the trailing structure (today: carried verbatim with `PMI_MANAGER_TAIL_UNDOCUMENTED`, never read as something it may not be) |
+| The entropy-coded vectors inside Compressed CAD Tag Data (Figure 154) | a consumer needs CAD tags — it needs the Int64 CDP (Figures 135–137) for Type-2 tags, the same deferral the B-rep/curve data waits on; today the framing is decoded and the coded bytes are kept verbatim, their extent pinned by the collection's own Data Length |
+| The v9 PMI Manager layout (v9.5 Figure 136: PMI Version Number, reserved field, per-entity-type collections) | the first v9 fixture carrying a PMI Manager (today: opaque with `ELEMENT_LAYOUT_UNVERIFIED`; the v9 Property Proxy element *does* decode — its v9.5 figure is the v10 layout with an I16 version) |
+| Surfacing meta data properties and PMI into the Layer 2 scene | a consumer needs them *and* a decision is made about which conventions the scene interprets (§13.8's CAD/tessellation/PMI property tables) rather than passing raw key/value bags through a format-agnostic model; today they are complete at Layer 1 |
+| Authoring §11 segments in `writeJt` (property bags, PMI) | the Layer 2 scene grows the concepts — a file without meta data segments is legal, and the writer emits none today (the read side is `done`, so a written file's bags could be verified against it immediately) |
 | v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |
 | ~~Property-table *semantics* (units, key naming conventions, §13.8)~~ | **done** (issue #7, see *Layer 2, read side*): JT_PROP_NAME, JT_PROP_MEASUREMENT_UNITS, key visibility convention, late-loaded shape resolution; other conventions (SUBNODE/reference sets, CAD/tessellation properties) stay raw at Layer 1 — their time comes with the first consumer that needs them interpreted |
 | ~~`writeJt(scene)` — Layer 2 write side~~ | **done** (issue #8, see *Layer 2, write side*): scene → LSG + shape LOD segments, round-trip-verified on both fixtures; what remains is the external validation (JT2Go opening the staged candidates) before any of it freezes as a golden |
