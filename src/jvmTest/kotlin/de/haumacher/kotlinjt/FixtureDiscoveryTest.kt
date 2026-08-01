@@ -126,15 +126,14 @@ class FixtureDiscoveryTest {
             assertTrue(kotlin.math.abs(length - 1f) < 1e-3, "non-unit normal $normal")
         }
         if (declared == null) return
-        // Cross-model checks: the declared vertex count is the rendered (per-corner) count,
-        // so the decoded unique coordinates can never exceed it.
-        val vertexRange = declared.vertexCountRange
-        if (vertexRange.max > 0) {
-            assertTrue(
-                geometry.vertices.size <= vertexRange.max,
-                "$id: ${geometry.vertices.size} unique vertices exceed the LSG-declared maximum $vertexRange",
-            )
-        }
+        // No vertex-count assertion here, deliberately. The LSG's Vertex Count Range is NOT
+        // normatively related to any count in the LOD body: 9.5 says nothing tying the two
+        // together (SPEC_COVERAGE_95.md, finding E-13). Empirically the NetAllied producer
+        // writes `triangles + 2 * strips` — the strip-corner count of a strip representation
+        // the compressed body does not store — which exceeds the vertex-record count only
+        // when records are shared. KR360-1.jt's {…33} is the counter-example: 125 face groups
+        // of a repeated glyph share almost nothing, so 4455 records sit above a declared 3003
+        // while the file's own topology, coordinate and normal hashes all verify.
         val polygonRange = declared.polygonCountRange
         if (polygonRange.max > 0) {
             // NX 10.5 declares more polygons than the topological decode yields (the strip
@@ -168,8 +167,10 @@ class FixtureDiscoveryTest {
             }
         }
         if (declared == null) return
-        // The declared vertex count is the per-corner count of the vertex list — exact in
-        // the NIST fixture (all 15 polyline LODs).
+        // A corpus convention, not a spec rule: 9.5 ties no LOD count to the LSG's Vertex
+        // Count Range (SPEC_COVERAGE_95.md, finding E-13). It holds exactly for all 15 NIST
+        // polyline LODs, so it stays as decode-drift regression cover — but a future fixture
+        // that breaks it is evidence about its producer, not a defect.
         val corners = geometry.polylines.sumOf { it.vertexIndices.size }
         val vertexRange = declared.vertexCountRange
         if (vertexRange.max > 0) {
@@ -399,12 +400,19 @@ class FixtureDiscoveryTest {
                                 ?: continue
                         groups.getOrPut(ancestor) { mutableListOf() }.add(tier to count)
                     }
-                    val multiTier = groups.values.filter { it.size > 1 }
+                    // A tier is a Group Node and may hold many shapes — KR360-1.jt hangs all
+                    // eleven of its coloured shapes off one tier. So the comparable quantity
+                    // per tier is the SUM over its shapes, and a part with several shapes in
+                    // one tier is not a duplicate-tier defect.
+                    val byTier =
+                        groups.mapValues { (_, entries) ->
+                            entries.groupBy { it.first }.mapValues { (_, v) -> v.sumOf { it.second } }
+                        }
+                    val multiTier = byTier.values.filter { it.size > 1 }.map { it.toList() }
                     assumeTrue(multiTier.isNotEmpty(), "no part with more than one decoded LOD tier in this fixture")
                     var checked = 0
                     for (tiers in multiTier) {
                         val sorted = tiers.sortedBy { it.first }
-                        assertEquals(sorted.map { it.first }.distinct(), sorted.map { it.first }, "duplicate LOD tier in one part")
                         for (i in 1 until sorted.size) {
                             // Strictly descending — what the NIST data actually shows on
                             // every tier boundary of all 13 parts (issue #6).

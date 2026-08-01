@@ -110,6 +110,68 @@ preserved `trailing` bytes. The write path never goes through the scan, so a con
 scan can never lose bytes. A known-type segment whose data yields *no* frame at all is
 flagged `ELEMENT_STREAM_UNRECOGNIZED`.
 
+## Lenient when reading, strict when writing (Bernhard, 2026-08-01)
+
+Acquiring the JT 9.5 Rev-D reference turned a class of open questions into a class of *conflicts*:
+places where the document and a real producer disagree, and where the corpus cannot arbitrate.
+The governing rule:
+
+> **Lenient when reading, strict when writing.** The reader accepts both the document's encoding
+> and the producer's; the writer emits only the document's.
+
+Two constraints keep this from eroding issue #1's guarantees:
+
+1. **Leniency is recorded, never normalized.** Layer 1 is lossless. If the reader accepts a
+   variant the figure does not describe, the model carries *which variant it saw*, so
+   re-serialization stays byte-identical. A reader that canonicalizes two encodings into one
+   model field has broken round-tripping — a defect, not a convenience. (There is such a hole
+   today: `writeVertexShapeData` re-derives field presence from `version` instead of from the
+   model's nullability.)
+2. **Leniency is not silence.** An accepted off-document encoding still earns a named
+   `LoadNote` where it is material. Silence keeps meaning "this matched the document".
+
+### Local version guards mean `>= N`, not `== N`
+
+The rule that came out of the 9.5 delta pass, and it is library-wide. 9.5 §9.4 and v10 §13 both
+define local versions as **append-only**: data for each local version is written in order, and a
+reader reads up to the version it supports and skips the rest. A version-1 reader must therefore
+be able to read the version-1 prefix of a version-2 body — so version 2 cannot *remove* a
+version-1 field. A figure box guarded `Version Number == 1` says "this field belongs to local
+version 1", i.e. it is present whenever the version is at least 1.
+
+Consequence: 9.5 Figures 30/33/34 gate `U64` fields on `Version Number == 1`, both NetAllied
+fixtures write version 2 and emit them, and the producer is **conformant**. `LsgCodecs.kt`'s
+`version >= 2` was an empirical discovery of the right operator with the threshold off by one,
+which is why every fixture passed. Validation condition when widening: if any v10 element has a
+`== 1` guard over a field a version-2 body genuinely omits, the NIST round-trip will catch it.
+
+## The JT 9.5 reference (Rev-D) and what it changed in this record
+
+Until 2026-08-01 every v9 delta below was reverse engineered from two 9.5 fixtures. The 9.5
+document is now available (kept locally, never committed — Siemens copyright, as with the v10
+PDF), and an eight-package delta pass compared it against v10 and against this code. The result
+is **`SPEC_COVERAGE_95.md`** (the ledger: 355 rows, ~84 findings, 21 contradictions) with the
+per-package evidence under **`docs/spec95-analysis/`**.
+
+What that pass did to the deltas recorded below:
+
+- **Upgraded from fixture-inference to citation:** deltas 1, 3, 4, 6, 7, 8, 10, 11, 12, 16, 18
+  (in part), 20, 38. Delta 16's failure mode is now quantified — read the v10 way, the headers
+  agree for 22 bits and diverge at bit 23. Delta 20's 30/30/4 chunking is confirmed by three
+  independent 9.5 passages.
+- **Corrected:** delta 2 (v9 *does* specify the conditional trailing header GUID; the fixtures
+  simply have Reserved Field = 0 — and in *both* documents that GUID is an XOR alternative to
+  the LSG Segment ID, not an addition) · delta 14 (the "reserved 12-byte tail" is the documented
+  TopoMesh Compressed Rep Data **V2** tail, 9.5 Fig. 92) · delta 17 (Rev-D Appendix C §2.2 *does*
+  describe the bitlength wire format, statement for statement) · delta 36 (Figure 126's guard
+  encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right).
+- **Refuted as a claim, though the behaviour stands:** the statement in `LwpaDocument.kt`, this
+  file and `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It
+  does — §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries.
+
+Deltas below are left as originally written; where the pass changed their status, the list above
+is the authority.
+
 ## v9 vs v10 structural deltas (established, with byte evidence from the fixture)
 
 The v10 reference documents only the v10 wire format. The deltas below were verified against

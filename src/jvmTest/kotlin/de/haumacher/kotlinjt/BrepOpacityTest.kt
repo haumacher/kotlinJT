@@ -1,5 +1,6 @@
 package de.haumacher.kotlinjt
 
+import de.haumacher.kotlinjt.io.ByteReader
 import de.haumacher.kotlinjt.lsg.LateLoadedPropertyAtomElement
 import de.haumacher.kotlinjt.lsg.ObjectTypeIds
 import de.haumacher.kotlinjt.lsg.StringPropertyAtomElement
@@ -128,12 +129,30 @@ class BrepOpacityTest {
                         assertEquals(expectedType, element.objectTypeId, "$id: unexpected element type ($name)")
                         // Table 7's "JtBase", as every §8–§11 element carries.
                         assertEquals(9, element.objectBaseType, "$id: unexpected object base type")
-                        // The Figure-78 empty Property Table after the element list.
-                        assertArrayEquals(
-                            byteArrayOf(1, 0, 0, 0, 0, 0),
-                            scan.trailing.toByteArray(),
-                            "$id: unexpected bytes after the element list",
-                        )
+                        // What trails the element list is NOT normative: neither 9.5 Fig. 101
+                        // nor v10 Fig. 161 draws a Property Table on a precise-geometry
+                        // segment (SPEC_COVERAGE_95.md, finding G-4). NX 10.5 writes an empty
+                        // one; a conformant producer need not, and may write a non-empty one.
+                        // So assert the shape the doctrine actually needs — the trailing bytes
+                        // are either absent or a well-formed Property Table — and leave their
+                        // byte-for-byte preservation to the re-serialization test below.
+                        val trailing = scan.trailing.toByteArray()
+                        if (trailing.isNotEmpty()) {
+                            assertTrue(
+                                trailing.size >= 6,
+                                "$id: ${trailing.size} trailing bytes are too few for a Property Table",
+                            )
+                            val order = file.header.byteOrder
+                            val reader = ByteReader(trailing, order)
+                            val version = reader.readI16().toInt()
+                            val entryCount = reader.readI32()
+                            assertTrue(version == 1, "$id: trailing Property Table version $version")
+                            assertTrue(
+                                entryCount >= 0 && entryCount <= reader.remaining / 8,
+                                "$id: trailing Property Table declares $entryCount entries, " +
+                                    "which ${reader.remaining} remaining bytes cannot hold",
+                            )
+                        }
                     }
                 },
                 dynamicTest("B-rep payload bytes survive parse to whole-file re-encode byte-identically") {
