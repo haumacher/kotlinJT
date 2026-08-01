@@ -199,6 +199,21 @@ class ShapeLodDocumentTest {
         assertTrue(geometry.triangles.all { it.faceGroup == 0 })
         assertTrue(geometry.triangles.all { it.n0 == -1 && it.n1 == -1 && it.n2 == -1 })
 
+        // spec: 9.5 Figure 92 — the twelve trailing bytes are the auxiliary-vertex-field
+        // extension plus the element version, not an undocumented reserved run (DESIGN.md
+        // delta 14, corrected). Figure 88 draws no branch for it; its own prose admits the
+        // version 2 this body declares.
+        val auxiliary = assertNotNull(element.auxiliaryVertexFields)
+        assertEquals(1, auxiliary.version)
+        assertEquals(0x2UL, auxiliary.vertexBindings)
+        assertTrue(!auxiliary.declaresAuxiliaryFields)
+        // Leniency, recorded rather than normalized: this hand-built body declares local
+        // version 1 in Figure 88's slot yet carries the extension the fixtures pair with
+        // version 2. Presence comes from the framed length, the declared version is preserved
+        // as read, and re-serialization above reproduces both — nothing is guessed, nothing
+        // lost.
+        assertEquals(1, element.topologicallyCompressedVersion)
+
         // spec: Figure 88 — the vertex records object id of the TopoMesh LOD data.
         assertEquals(77, element.topoMesh.vertexRecordsObjectId)
         // spec: Figure 90 — the quantization parameters travel with the vertex records.
@@ -206,6 +221,32 @@ class ShapeLodDocumentTest {
         // spec: Figure 78 — the trailing empty property table of every shape segment.
         val table = assertNotNull(result.document.propertyTable)
         assertEquals(0, table.tables.size)
+    }
+
+    // spec: 9.5 Figure 88
+
+    /**
+     * The counterpart of the fixture's version-2 bodies: a local-version-1 tri-strip body,
+     * which no producer in the corpus writes. Its presence is decided by the framed body's
+     * remaining length — two bytes for the element version alone — so the reader accepts it
+     * without a version comparison, and the writer emits exactly what the model holds.
+     */
+    @Test
+    fun aTriStripBodyWithoutTheAuxiliaryExtensionDecodesAndRoundTrips() {
+        val withoutTail = tetraBody.copyOfRange(0, tetraBody.size - 12) + byteArrayOf(1, 0)
+        val bytes =
+            elementData {
+                writeFrame(ObjectTypeIds.TRI_STRIP_SET_SHAPE_LOD_ELEMENT, withoutTail)
+                writeEndMarker()
+                writeEmptyPropertyTable()
+            }
+        val result = roundTrip(bytes, v9)
+        assertEquals(emptyList(), result.notes.map { it.name })
+        val element = assertIs<TriStripSetShapeLodElement>(result.document.elements.single())
+        assertEquals(null, element.auxiliaryVertexFields)
+        assertEquals(1, element.version)
+        // The geometry is the same tetrahedron: the extension carries no geometry of its own.
+        assertEquals(4, assertNotNull(result.document.triStripGeometry).triangles.size)
     }
 
     // spec: Figure 81

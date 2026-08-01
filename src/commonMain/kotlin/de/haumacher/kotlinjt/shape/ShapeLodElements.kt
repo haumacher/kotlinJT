@@ -20,7 +20,7 @@ sealed class ShapeLodElement {
 
 /**
  * A Shape LOD element carried opaquely: unknown type, a type without an established wire
- * layout for its generation (point/polygon/primitive sets; polyline in JT 9), or a failed
+ * layout for its generation (polygon and primitive sets; point sets outside JT 9), or a failed
  * decode. [body] preserves everything after the Object Type ID byte-faithfully.
  */
 data class OpaqueShapeLodElement(
@@ -142,6 +142,84 @@ data class TopologicallyCompressedRepDataV10(
 }
 
 /**
+ * The auxiliary-vertex-field extension the JT 9 generation appends to a shape's compressed
+ * representation: 9.5 Figure 92 *TopoMesh Compressed Rep Data V2* — `I16 : Version Number`,
+ * `U64 : Vertex Bindings`, and, when the bindings set the Auxiliary Vertex Field bit, the
+ * auxiliary field list.
+ *
+ * 9.5 Figure 87 gates it on the *TopoMesh Compressed LOD Data* version (`>= 2` ⇒ V2), and
+ * §7.2.2.1.2.4 declares the same version 2 valid for the *topologically* compressed container
+ * while Figure 88 draws no branch for it — a figure defect (DESIGN.md delta 14, corrected):
+ * all 23 JT 9 tri-strip bodies of the corpus carry exactly these fields. The library resolves
+ * presence from the framed body's remaining length rather than from the version, and records
+ * it as nullability, so the writer never recomputes it.
+ *
+ * [vertexBindings] repeats the shape's own bindings in every observed body, but nothing in
+ * the document requires that — it stays a field of its own.
+ */
+data class AuxiliaryVertexFieldData(
+    /** Figure 92's `I16 : Version Number`; `0x0001` is the only value the document admits. */
+    val version: Int,
+    /** Figure 92's `U64 : Vertex Bindings`; Table 48 bit 64 gates the auxiliary field list. */
+    val vertexBindings: ULong,
+) {
+    /** Whether Table 48's bit 64 (Auxiliary Vertex Field Binding) is set. */
+    val declaresAuxiliaryFields: Boolean get() = vertexBindings and AUXILIARY_VERTEX_FIELD_BINDING != 0UL
+
+    companion object {
+        /** Table 48 bit 64 — the spec numbers bits from 1, so this is bit index 63. */
+        val AUXILIARY_VERTEX_FIELD_BINDING: ULong = 1UL shl 63
+    }
+}
+
+/**
+ * The `if Polyline Shape` section of 9.5 Figure 91: the face-group index count and the index
+ * list itself. Absent as a whole on a Point Set Shape LOD Element — which is why it is one
+ * nested value and not two independently nullable fields.
+ */
+data class FaceGroupListSection(
+    /** `I32 : Number of Face Group List Indices`; the packet carries count + 1 values. */
+    val numberOfIndices: Int,
+    /** Primitive-list positions where each face group starts (`VecI32{Int32CDP2}`, NULL). */
+    val indices: Int32Cdp,
+)
+
+/**
+ * TopoMesh Compressed Rep Data V1 in the JT 9 generation (9.5 Figure 91, §7.2.2.1.2.7): the
+ * non-topological shape path of polyline and point sets. Against the v10 twin
+ * ([TopoMeshCompressedRepData], Figure 89) it differs in six field-level places — the
+ * `if Polyline Shape` guard over the face-group section, the NULL predictor on all three
+ * index lists (v10: Lag1), the extra `I32 : Number of Unique Vertex Coordinates`, the `I32`
+ * count types, the `if (bLineStrip)` guard in the FGPV hash, and the auxiliary fields living
+ * in the Figure-92 V2 tail instead of inline. Both stored hashes are verified at decode.
+ */
+data class TopoMeshCompressedRepDataV1(
+    /** The face-group section; `null` on a point set (9.5's `if Polyline Shape`). */
+    val faceGroupSection: FaceGroupListSection?,
+    val numberOfPrimitiveListIndices: Int,
+    val numberOfVertexListIndices: Int,
+    /** Vertex-list positions where each primitive starts (`VecI32{Int32CDP2}`, NULL). */
+    val primitiveListIndices: Int32Cdp,
+    /** Per-corner indices into the vertex records (`VecI32{Int32CDP2}`, NULL). */
+    val vertexListIndices: Int32Cdp,
+    /** Stored hash over the index lists — the face-group term only when the section is present. */
+    val fgpvListIndicesHash: Int,
+    val vertexBindings: ULong,
+    val quantizationParameters: QuantizationParameters,
+    val numberOfVertexRecords: Int,
+    /** 9.5-only `I32`; on the wire together with the length list when records > 0. */
+    val numberOfUniqueVertexCoordinates: Int?,
+    /** Per unique coordinate: how many vertex records share it; on the wire when records > 0. */
+    val uniqueVertexLengths: Int32Cdp?,
+    /** Stored hash over the unpacked length list (verified at decode). */
+    val uniqueVertexListMapHash: Int?,
+    /** Present when the bindings declare vertex coordinates (one entry per unique coordinate). */
+    val coordinates: CompressedVertexCoordinateArray?,
+    /** Present when the bindings declare normals (one entry per vertex record). */
+    val normals: CompressedVertexNormalArray?,
+)
+
+/**
  * TopoMesh Compressed Rep Data (Figure 89, v10; NIST-10.5-verified): the non-topological
  * shape path used by polyline (and point) sets — face-group/primitive/vertex index lists
  * plus the unique vertex records. Both stored hashes (FGPV, unique-vertex-length list) are
@@ -209,6 +287,16 @@ data class TriStripGeometry(
     )
 }
 
+/** A typed shape LOD element that decodes to polylines (both generations). */
+interface PolylineGeometryCarrier {
+    val geometry: PolylineGeometry
+}
+
+/** A typed shape LOD element that decodes to a point cloud (JT 9; no v10 fixture yet). */
+interface PointGeometryCarrier {
+    val geometry: PointGeometry
+}
+
 /**
  * The decoded geometry of a polyline set LOD: unique vertex coordinates (already smeared to
  * vertex-record space via the unique-length list) and polylines as index runs with their
@@ -225,6 +313,24 @@ data class PolylineGeometry(
         val faceGroup: Int,
     )
 }
+
+/**
+ * The decoded geometry of a point set LOD (9.5 Figure 95): unique vertex coordinates smeared
+ * to vertex-record space, and one index per point in file order. A point set carries no face
+ * groups — 9.5's `if Polyline Shape` guard excludes it — so points have no group to belong to;
+ * the primitive list that slices them is validated at decode and preserved in the wire model.
+ *
+ * 9.5 §7.2.2.1.5 says "Each point constitutes one primitive of the set", so a conformant
+ * producer writes one primitive per point. That is a statement about meaning, not about the
+ * wire, and the reader does not enforce it: a body whose primitives span several vertices
+ * still tiles the vertex list, and refusing it would be a false refusal.
+ */
+data class PointGeometry(
+    /** One coordinate per vertex record. */
+    val vertices: List<Vec3F32>,
+    /** The vertex-record index of each point, in file order. */
+    val points: List<Int>,
+)
 
 // ---------------------------------------------------------------------------
 // Element types
@@ -247,10 +353,12 @@ data class TriStripSetShapeLodElement(
     /** TopoMesh Topologically Compressed LOD Data version (Figure 91; I16 in JT 9). */
     val topologicallyCompressedVersion: Int,
     val repData: TopologicallyCompressedRepData,
-    /** Trailing reserved I16 of the JT 9 layout (semantics unconfirmed; value 1 in the fixture). */
-    val reservedVersion: Int,
-    /** Trailing U64 of the JT 9 layout, repeating the vertex bindings in the fixture. */
-    val reservedBindings: ULong,
+    /**
+     * The Figure-92 auxiliary-vertex-field extension, `null` when the body ends without it.
+     * Figure 88 draws no branch for it, but its own prose admits version 2 and every JT 9
+     * tri-strip body of the corpus carries it — see [AuxiliaryVertexFieldData].
+     */
+    val auxiliaryVertexFields: AuxiliaryVertexFieldData?,
     /** The element's own version number (Figure 81; trailing I16 in JT 9). */
     val version: Int,
     override val geometry: TriStripGeometry,
@@ -342,9 +450,67 @@ data class PolylineSetShapeLodElementV10(
     val repData: TopoMeshCompressedRepData,
     /** The element's own version number (Figure 82; trailing U8 in v10). */
     val version: Int,
-    val geometry: PolylineGeometry,
-) : TypedShapeLodElement() {
+    override val geometry: PolylineGeometry,
+) : TypedShapeLodElement(), PolylineGeometryCarrier {
     override val objectTypeId: Guid get() = de.haumacher.kotlinjt.lsg.ObjectTypeIds.POLYLINE_SET_SHAPE_LOD_ELEMENT
+}
+
+/**
+ * Polyline Set Shape LOD Element in the JT 9 generation's wire layout (9.5 Figures 94, 84, 85,
+ * 86, 87, 91 and 92, verified against the five `KR360-1.jt` bodies): element header, the two
+ * `I16` versions Figure 84 requires (Figures 93/94/95 omit the Base Shape LOD Data box — a
+ * figure defect), `U64` bindings, **no** nested Logical Element Header, TopoMesh LOD Data with
+ * `I16`/`I32` fields, the compressed-LOD version, the V1 rep data, the Figure-92 auxiliary
+ * extension when the body carries it, and the element's trailing `I16` version.
+ */
+data class PolylineSetShapeLodElement(
+    override val objectId: Int,
+    /** Base Shape LOD Data version (Figure 83; `I16` in JT 9). */
+    val baseShapeLodVersion: Int,
+    /** Vertex Shape LOD Data version (Figure 85; `I16` in JT 9). */
+    val vertexShapeLodVersion: Int,
+    /** Vertex Bindings (Table 48). */
+    val vertexBindings: ULong,
+    val topoMesh: TopoMeshLodData,
+    /** TopoMesh Compressed LOD Data version (Figure 87; `I16` in JT 9, `>= 2` selects V2). */
+    val compressedLodVersion: Int,
+    val repData: TopoMeshCompressedRepDataV1,
+    /** The Figure-92 auxiliary-vertex-field extension, `null` when the body ends without it. */
+    val auxiliaryVertexFields: AuxiliaryVertexFieldData?,
+    /** The element's own version number (Figure 94; trailing `I16` in JT 9). */
+    val version: Int,
+    override val geometry: PolylineGeometry,
+) : TypedShapeLodElement(), PolylineGeometryCarrier {
+    override val objectTypeId: Guid get() = de.haumacher.kotlinjt.lsg.ObjectTypeIds.POLYLINE_SET_SHAPE_LOD_ELEMENT
+}
+
+/**
+ * Point Set Shape LOD Element in the JT 9 generation's wire layout (9.5 Figure 95 and the same
+ * inherited collections as [PolylineSetShapeLodElement], verified against the one `KR360-1.jt`
+ * body). The point set is **not** a "Polyline Shape": Figure 91's guarded face-group count and
+ * index list are off the wire, and 9.5's FGPV hash pseudo-code guards its face-group term with
+ * `if (bLineStrip)` accordingly — v10 deleted that guard, so reusing the v10 reader here would
+ * refuse a conformant file.
+ */
+data class PointSetShapeLodElement(
+    override val objectId: Int,
+    /** Base Shape LOD Data version (Figure 83; `I16` in JT 9). */
+    val baseShapeLodVersion: Int,
+    /** Vertex Shape LOD Data version (Figure 85; `I16` in JT 9). */
+    val vertexShapeLodVersion: Int,
+    /** Vertex Bindings (Table 48). */
+    val vertexBindings: ULong,
+    val topoMesh: TopoMeshLodData,
+    /** TopoMesh Compressed LOD Data version (Figure 87; `I16` in JT 9, `>= 2` selects V2). */
+    val compressedLodVersion: Int,
+    val repData: TopoMeshCompressedRepDataV1,
+    /** The Figure-92 auxiliary-vertex-field extension, `null` when the body ends without it. */
+    val auxiliaryVertexFields: AuxiliaryVertexFieldData?,
+    /** The element's own version number (Figure 95; trailing `I16` in JT 9). */
+    val version: Int,
+    override val geometry: PointGeometry,
+) : TypedShapeLodElement(), PointGeometryCarrier {
+    override val objectTypeId: Guid get() = de.haumacher.kotlinjt.lsg.ObjectTypeIds.POINT_SET_SHAPE_LOD_ELEMENT
 }
 
 /**

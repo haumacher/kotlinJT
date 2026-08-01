@@ -449,6 +449,13 @@ exact byte consumption pin each layout — a one-byte deviation breaks both).
     bindings in all 12 bodies) are reserved fields whose semantics no spec revision at hand
     documents — carried as named reserved fields, byte-faithful. v10 (Figure 81/85) drops
     them and shrinks the versions to U8/I8.
+    **Corrected (issue #12, package P3)**: they are not reserved. They are 9.5 Figure 92's
+    *TopoMesh Compressed Rep Data V2* auxiliary-vertex-field extension — `I16` version, `U64`
+    vertex bindings, and, when bit 64 of those bindings is set, the auxiliary field list. See
+    *Layer 1: the 9.5 polyline and point set bodies* below; the model field is now
+    `auxiliaryVertexFields: AuxiliaryVertexFieldData?`, not `reservedVersion` /
+    `reservedBindings`, and its presence is read from the framed body's length rather than
+    assumed.
 15. **The JT 9 Int32CDP is the 9.5 reference's "Mk. 2" packet** (§8.1.2), not v10's Figure
     132: I32 value count (count 0 ends the packet); U8 codec (0 null / 1 bitlength /
     3 arithmetic / 4 chopper); null/bitlength/arithmetic: I32 CodeText bit length + exactly
@@ -523,7 +530,9 @@ and lossless binary-float coordinates (LOD0); packed Deering normals (LOD1/2, 3 
 per angle) and lossless binary normals (LOD0); per-vertex flag arrays (all tri-strips bind
 Table 48 bit 7). The null CODEC never occurs in v10 wire (implemented, spec-derived — its
 layout is Figure-132-fixed and identical to the fixture-verified JT 9 form). Point set,
-polygon set and primitive set bodies remain refuse-with-note: no fixture carries one.
+polygon set and primitive set bodies remain refuse-with-note **in v10**: no v10 fixture carries
+one. (The *JT 9* point set landed with issue #12 — see below; the polygon set has no 9.5 LOD
+element at all, and the primitive set none anywhere in the corpus.)
 
 ## v10 shape wire format as NX 10.5 writes it (established, with byte evidence from the NIST fixture)
 
@@ -585,6 +594,115 @@ Recorded observations from the same evidence:
   per-angle bit count in all 39 bodies (`BitsPerNormal = 6 + 2·factor` = the packed code
   width) — no v10 counterpart of the JT 9 discrepancy recorded in delta 21; the array's own
   field remains authoritative in the decoder.
+
+## Layer 1: the 9.5 polyline and point set bodies (issue #12, package P3)
+
+**Scope and grounding.** The JT 9 generation of the *non-topological* shape path: 9.5 Figures 94
+(Polyline Set Shape LOD Element) and 95 (Point Set Shape LOD Element) over the inherited
+Figures 84, 85, 86, 87, 91 and 92. Evidence: the five polyline and one point-set bodies of the
+9.5 bug fixture, every stored hash in them (6 FGPV + 6 unique-vertex-map + 6 coordinate), exact
+byte consumption on all six, and the 23 JT 9 tri-strip bodies of both 9.5 fixtures for the
+Figure-92 extension and the composite-hash correction. The delta analysis is
+`docs/spec95-analysis/E-shape-lod.md`; the ledger rows are package E of `SPEC_COVERAGE_95.md`.
+
+**The reader was built from the document, not copied from the v10 one — deliberately.** 9.5
+Figure 91 and v10 Figure 89 describe the same collection and differ in six field-level places.
+Five of them are visible in a byte count and would have been found by trial; the sixth is not,
+and it is the one that decides correctness:
+
+1. **`if Polyline Shape` guards the face-group section.** 9.5 puts the `I32 Number of Face Group
+   List Indices` *and* the Face Group List Indices array behind that guard; v10 writes both
+   unconditionally. The point-set body proves the guard is literal: parsed with the count and
+   the array, its next packet reads a CODEC byte of 128; parsed without them, it lands exactly
+   on the primitive-list packet and consumes to the byte. The reverse experiment fails
+   symmetrically on the polylines (CODEC byte 2).
+2. **The three index lists are NULL-predicted (`{Int32CDP2}`), not Lag1 (`{Int32CDP, Lag1}`).**
+   Both readings frame identically — same packets, same byte count — so only the stored hash
+   can arbitrate, and it does: body `453756`'s FGPV hash is `0xbc4a3adf`, which the NULL reading
+   reproduces and the Lag1 reading turns into `0x6f4a2d74`. The decoded lists agree with the
+   verdict (NULL: `Prim [0,2,4,6,8,…]`, `Vtx [0,1,1,2,2,3,…]`; Lag1: `Prim [0,2,4,6,14,24,…]`).
+   A copy-and-patch of the v10 reader inherits Lag1 and refuses all five bodies — a *false*
+   refusal, which is worse than a wrong answer because it looks like honesty.
+3. **9.5 adds `I32 : Number of Unique Vertex Coordinates`** inside the `if number records > 0`
+   branch; v10 has no such field. Confirmed by consumption and by the two invariants 9.5's own
+   prose states: it equals the length list's entry count and the coordinate array's count, and
+   the length list sums to the vertex-record count (347 / 347 / 347 on the largest body).
+4. **The counts are `I32` in 9.5, `U32` in v10** — same width, no observable difference; the
+   reader takes the signed reading 9.5 prints and refuses a negative.
+5. **The FGPV hash pseudo-code guards its face-group term `if (bLineStrip)`**; v10 deleted the
+   guard, as it deleted the figure's. The point-set body's stored `0xe34cace1` is
+   `hash32(prim) -> hash32(vtx)` with no face-group term.
+6. **Auxiliary fields live in the Figure-92 V2 tail**, not in an `if AuxField Bindings` box
+   inside the representation as v10 Figure 89 puts them.
+
+**Figure 92, and what delta 14 called reserved.** 9.5 §7.2.2.1.2.3 / Figure 87 reads TopoMesh LOD
+Data, an `I16` version, and then *TopoMesh Compressed Rep Data V2* if that version is at least 2,
+V1 otherwise. V2 is V1 followed by `I16` version, `U64` vertex bindings and — only when Table 48
+bit 64 is set — the auxiliary field list. All six polyline/point bodies declare version 2 and
+carry exactly ten such bytes with bit 64 clear, which accounts for the "12-byte tail" delta 14
+recorded (ten, plus the element's own trailing `I16`). All 23 tri-strip bodies carry the same ten
+bytes in the same place although their container is *TopoMesh **Topologically** Compressed LOD
+Data*, whose Figure 88 draws **no** version branch — while its own §7.2.2.1.2.4 prose declares
+version `0x0002` valid, and §9.4's append-only local versions make appended data the only
+consistent reading. **Figure 88 is incomplete**, and the model now names those fields
+`AuxiliaryVertexFieldData(version, vertexBindings)`.
+
+**Presence is read from the length, not from the version** — package P2's mechanism (issue #11),
+and here it is not merely preferable but necessary, since the topologically compressed container
+offers no version branch to test. The element's own trailing `I16` is the only field after the
+representation, so a framed body has either 2 bytes left (no extension) or 12 (extension without
+an auxiliary field list). The two readings cannot both fit, so nothing is guessed; anything else
+refuses by name. The declared container version is preserved as read and never used as a gate, so
+a producer writing version 1 with the extension — or version 2 without it — still round-trips
+byte-exactly. The auxiliary field list itself refuses with a named message rather than being
+decoded from the document alone: its 46-row type table and type-branched arrays have never been
+validated against a real byte, and `ELEMENT_DECODE_FAILED` over a verbatim body is the honest
+outcome until a fixture exists.
+
+**The composite hash was hashing the wrong thing, and it was a latent false refusal.** 9.5 p.116
+computes the composite hash over the *derived* face-attribute-mask arrays: contexts 0-6 masked to
+their low 30 bits, and context 8's three projections (`& 0x3fffffff`, `>> 30 & 0x3fffffff`,
+`>> 60 & 0x0f`) each hashed with `anAttrMasks[7]` elements — the context's own mask count,
+whatever the three stored packets happen to carry. The library hashed the stored packets. Masking
+contexts 0-6 is provably immaterial (the mask context is `min(7, degree - 2)`, so those contexts
+hold rings of degree 2-8 and their masks are at most 8 bits wide); it is applied anyway, so the
+code reads as the document does. The *lengthening* is not immaterial: the Jenkins hash mixes the
+element count in, so a producer that elides an all-zero upper chunk as an empty packet — and the
+top chunk is bits 60-63 of the mask, all zero unless some vertex has ring degree above 60, i.e.
+all zero in every body of this corpus — writes a hash over N zeros where the old reader computed
+one over an empty array. Different value, `ELEMENT_DECODE_FAILED`, a conformant file refused.
+Both corpus producers happen to write the chunks out in full, which is why no fixture could ever
+have caught it. `context8Chunks` now derives the three arrays once, at the context's length, and
+both the hash and the mask reassembly read from it, so the two can no longer drift apart. The
+regression test rewrites every JT 9 tri-strip body of every discovered fixture with its all-zero
+top chunk elided and requires the stored hash to still verify and the mesh to be unchanged; under
+the old rule every one of those bodies false-refuses.
+
+**Two spec defects read past, and recorded rather than "fixed".** Figures 93, 94 and 95 each show
+only Logical Element + Vertex Shape LOD Data + version, omitting the Base Shape LOD Data box that
+Figure 84 requires of every Vertex Shape LOD Element; the bytes side with Figure 84 (every JT 9
+shape body opens `04 | I32 objectId | 01 00 | 01 00 | U64 bindings` — two `I16` versions). And
+Figure 97's Primitive Set Shape Element orders its fields differently from the prose that
+describes them, which is one of the reasons that element stays opaque.
+
+**The geometry surface.** `PolylineGeometry` is unchanged and now serves both generations through
+`PolylineGeometryCarrier`; the point set gets `PointGeometry(vertices, points)` — coordinates
+smeared to vertex-record space through the unique-length list exactly as for polylines, and one
+vertex-record index per point in file order. A point set has no face groups to assign points to,
+because 9.5's `if Polyline Shape` puts none on the wire; the primitive list that slices them is
+validated at decode (it must tile the vertex list) and preserved in the wire model, so the
+projection loses nothing. 9.5 §7.2.2.1.5's "Each point constitutes one primitive of the set" is
+recorded but *not* enforced — it is a statement about meaning, and refusing a body that groups
+several points into one primitive would be a false refusal. Layer 2 sees neither yet:
+`SceneNode` has no point concept, and the scene's shape resolution for this fixture is
+issue #13's.
+
+**One branch of Figure 91 the corpus does not exercise**, and where the figure's own bracket is
+hard to read even rendered: whether the binding-guarded vertex arrays sit inside the
+`If number records > 0` branch or after it. No body in either 9.5 fixture declares zero vertex
+records; the reader mirrors the v10 sibling (`readTopoMeshCompressedRepData`, settled on the
+NIST bodies) and stops at the record count when it is zero. Its time comes with a fixture that
+has one.
 
 ## LZMA decoding (issue #5)
 
@@ -1324,7 +1442,9 @@ Recorded observations from the same evidence:
 | ~~Int64CDP (Figures 135–137)~~ | **done** (issue #10): landed with §10, its first consumer — arithmetic, bitlength and move-to-front fixture-verified on the wireframe bodies; null and chopper spec-derived |
 | XZ SHA-256 block-check verification, non-LZMA2 xz filter chains | first real stream carrying them (today: SHA-256 decodes unverified; foreign filter chains refuse with `UNSUPPORTED_COMPRESSION`) |
 | LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than plain storage permits — note Table 8/9 leave *no other* v10 choice: ZLIB is a JT 9 value, so "stored" is the only legal alternative (issue #1 policy: simplest legal encodings) |
-| Point/Polygon/Primitive Set Shape LOD bodies; Polyline Set in the JT 9 generation | first fixture carrying them (the NIST polylines settled the v10 Polyline layout — issue #6; no fixture shows the others) |
+| ~~Polyline Set and Point Set Shape LOD bodies in the JT 9 generation~~ | **done** (issue #12, package P3, see *Layer 1: the 9.5 polyline and point set bodies*): the five Polyline Set and one Point Set body of the 9.5 bug fixture decode typed, hash-exact and byte-exact |
+| Polygon Set and Primitive Set Shape LOD bodies; the v10 Point Set body | first fixture carrying them. 9.5 defines **no** Polygon Set LOD element at all (its Annex-A table lists six types and that is not one of them), and Figure 97's Primitive Set figure contradicts its own prose about where Texture Coord Gen Type sits — so the primitive set additionally needs a fixture to arbitrate, plus the Mk.-1 `Int32CDP` packet its §7.2.2.2.2 path uses and the library does not implement |
+| The auxiliary vertex field *list* of 9.5 Figure 92 (GUID + field type + the type-branched `VecU32{Int32CDP2}` triples + the Auxiliary Data Hash) | the first fixture whose vertex bindings set Table 48 bit 64. The document specifies it; no file in the corpus exercises it, and P3 refuses it by name rather than decode a 46-row type table nothing has ever validated. The *extension point* it hangs off is decoded and typed today |
 | Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
 | ~~Element body parsing for meta data / PMI segments~~ | **done** (issue #9, see *Layer 1: Meta data and PMI*): all 44 Meta Data / PMI Data segments of the NIST fixture decode typed, byte-identical round-trip, cross-checked against the LSG's late-loaded references |
 | The undocumented block NX 10.5 writes after a PMI Manager's fonts (delta 33) — and with it Figure 110's segment-level `Property Count` / PMI Properties and Figure 131's Model View Sort Orders | a fixture whose Property Count or Model View Sort Order Count is non-zero, or documentation of the trailing structure (today: carried verbatim with `PMI_MANAGER_TAIL_UNDOCUMENTED`, never read as something it may not be) |
