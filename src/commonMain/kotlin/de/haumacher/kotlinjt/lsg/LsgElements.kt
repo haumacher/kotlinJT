@@ -111,7 +111,13 @@ data class VertexShapeData(
     val vertexBindings: ULong,
     /** On the wire in JT 9 only. */
     val quantizationParameters: QuantizationParameters?,
-    /** On the wire in JT 9 only, when [version] >= 2. */
+    /**
+     * 9.5 Figure 30's second `U64 : Vertex Binding`, on the wire in JT 9 only. The figure
+     * guards it with `Version Number == 1`, which under §9.4's append-only local versions
+     * means "belongs to local version 1", i.e. present from version 1 upwards — but presence
+     * is resolved from the body's remaining length and recorded here, never re-derived from
+     * the version on write.
+     */
     val vertexBindings2: ULong?,
 )
 
@@ -313,24 +319,32 @@ data class TriStripSetShapeNodeElement(
     override val shape: BaseShapeData get() = vertexShape.shape
 }
 
-/** Polyline Set Shape Node Element (Figure 40). */
+/** Polyline Set Shape Node Element (v10 Figure 40 / 9.5 Figure 33). */
 data class PolylineSetShapeNodeElement(
     override val objectId: Int,
     val vertexShape: VertexShapeData,
     val version: Int,
     val areaFactor: Float,
+    /**
+     * 9.5 Figure 33's guarded `U64: Vertex Bindings`, which v10 Figure 40 does not have at
+     * all. `null` when the element body does not carry it — the writer then emits none.
+     */
+    val vertexBindings: ULong? = null,
 ) : ShapeNodeElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.POLYLINE_SET_SHAPE_NODE
     override val shape: BaseShapeData get() = vertexShape.shape
 }
 
-/** Point Set Shape Node Element (Figure 41). */
+/** Point Set Shape Node Element (v10 Figure 41 / 9.5 Figure 34). */
 data class PointSetShapeNodeElement(
     override val objectId: Int,
     val vertexShape: VertexShapeData,
     val version: Int,
     val areaFactor: Float,
-    /** JT 10 stores an extra U64 binding field when [version] == 1; otherwise `null`. */
+    /**
+     * The guarded `U64: Vertex Bindings` both documents draw after the Area Factor. `null`
+     * when the element body does not carry it — the writer then emits none.
+     */
     val vertexBindings: ULong?,
 ) : ShapeNodeElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.POINT_SET_SHAPE_NODE
@@ -361,12 +375,17 @@ data class PrimitiveSetQuantizationParameters(
     val bitsPerColour: Int,
 )
 
-/** Primitive Set Shape Node Element (Figure 44). */
+/** Primitive Set Shape Node Element (v10 Figure 44 / 9.5 Figure 37). */
 data class PrimitiveSetShapeNodeElement(
     override val objectId: Int,
     override val shape: BaseShapeData,
     val version: Int,
-    val vertexBindings: ULong,
+    /** v10 Figure 44's fused `U64: Vertex Bindings`; `null` in JT 9, which splits it in two. */
+    val vertexBindings: ULong?,
+    /** 9.5 Figure 37's `I32 : Texture Coord Binding` (0 = None, 1 = Per Vertex); `null` in JT 10. */
+    val textureCoordBinding: Int?,
+    /** 9.5 Figure 37's `I32 : Color Binding` (0 = None, 1 = Per Vertex); `null` in JT 10. */
+    val colourBinding: Int?,
     val texCoordGenType: Int,
     val version2: Int,
     val quantization: PrimitiveSetQuantizationParameters,

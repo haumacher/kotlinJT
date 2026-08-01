@@ -259,22 +259,28 @@ class LsgNodeElementCodecTest {
         }
 
     // spec: Figure 40
+    // spec: 9.5 Figure 33
     @Test
     fun polylineSetShapeNodeElement() =
         forBothOrders { order ->
             for (generation in LsgGeneration.entries) {
+                val v9 = generation == LsgGeneration.V9
                 val bytes =
                     lsgFrame(order, ObjectTypeIds.POLYLINE_SET_SHAPE_NODE, 2, 13) {
                         writeTestVertexShapeData(generation)
                         writeTestVersionNumber(generation)
                         writeF32(0.5f) // area factor
+                        // 9.5 Figure 33 ends the element with a guarded U64; v10 Figure 40 does not.
+                        if (v9) writeU64(0x7uL)
                     }
                 val element = roundTripTyped(bytes, order, generation) as PolylineSetShapeNodeElement
                 assertEquals(0.5f, element.areaFactor)
+                assertEquals(if (v9) 0x7uL else null, element.vertexBindings)
             }
         }
 
     // spec: Figure 41
+    // spec: 9.5 Figure 34
     @Test
     fun pointSetShapeNodeElement() =
         forBothOrders { order ->
@@ -284,16 +290,11 @@ class LsgNodeElementCodecTest {
                         writeTestVertexShapeData(generation)
                         writeTestVersionNumber(generation)
                         writeF32(1f) // area factor
-                        if (generation != LsgGeneration.V9) {
-                            writeU64(0x5uL) // version == 1: extra binding field (Figure 41)
-                        }
+                        // Both documents draw the guarded U64 here, so every generation has it.
+                        writeU64(0x5uL)
                     }
                 val element = roundTripTyped(bytes, order, generation) as PointSetShapeNodeElement
-                if (generation != LsgGeneration.V9) {
-                    assertEquals(0x5uL, element.vertexBindings)
-                } else {
-                    assertNull(element.vertexBindings)
-                }
+                assertEquals(0x5uL, element.vertexBindings)
             }
         }
 
@@ -328,23 +329,42 @@ class LsgNodeElementCodecTest {
 
     // spec: Figure 44
     // spec: Figure 45
+    // spec: 9.5 Figure 37
+    // spec: 9.5 Figure 38
     @Test
     fun primitiveSetShapeNodeElement() =
         forBothOrders { order ->
             for (generation in LsgGeneration.entries) {
+                val v9 = generation == LsgGeneration.V9
                 val bytes =
                     lsgFrame(order, ObjectTypeIds.PRIMITIVE_SET_SHAPE_NODE, 2, 17) {
                         writeTestBaseShapeData(generation)
                         writeTestVersionNumber(generation)
-                        writeU64(0x1uL) // vertex bindings
+                        // 9.5 Figure 37 splits the eight binding bytes into two I32 fields;
+                        // v10 Figure 44 fuses them into one U64 at the same offset.
+                        if (v9) {
+                            writeI32(1) // texture coord binding: per vertex
+                            writeI32(0) // colour binding: none
+                        } else {
+                            writeU64(0x1uL) // vertex bindings
+                        }
                         writeI32(1) // tex coord gen type: isotropic
                         writeTestVersionNumber(generation)
-                        writeU8(16u) // bits per vertex (Figure 45)
+                        writeU8(16u) // bits per vertex (9.5 Figure 38 / v10 Figure 45)
                         writeU8(8u) // bits per colour
                     }
                 val element = roundTripTyped(bytes, order, generation) as PrimitiveSetShapeNodeElement
                 assertEquals(1, element.texCoordGenType)
                 assertEquals(PrimitiveSetQuantizationParameters(16, 8), element.quantization)
+                if (v9) {
+                    assertNull(element.vertexBindings, "JT 9 has no fused U64")
+                    assertEquals(1, element.textureCoordBinding)
+                    assertEquals(0, element.colourBinding)
+                } else {
+                    assertEquals(0x1uL, element.vertexBindings)
+                    assertNull(element.textureCoordBinding, "JT 10 has no split bindings")
+                    assertNull(element.colourBinding)
+                }
             }
         }
 }

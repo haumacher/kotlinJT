@@ -59,6 +59,9 @@ private fun ByteWriter.writeVersionNumber(
     }
 }
 
+/** Wire width of a Version Number field in [generation] — needed to budget an element body. */
+private fun versionNumberWidth(generation: LsgGeneration): Int = if (generation == LsgGeneration.V9) 2 else 1
+
 /**
  * The trailing I32 the 10.5 generation appends to every element carrying Base Attribute
  * Data — after the type-specific fields, observed −1 throughout (DESIGN.md delta 24).
@@ -219,16 +222,100 @@ private fun writeBaseShapeData(
     w.writeF32(data.compressionLevel)
 }
 
+/**
+ * Vertex Shape Data plus the presence decision for the *enclosing* element's own guarded
+ * `U64: Vertex Bindings`. Both are settled by one look at the body's remaining length, and
+ * the look has to happen inside the Vertex Shape Data read — that is where the last
+ * variable-width field (Base Node Data's attribute list) is already behind us.
+ */
+private class VertexShapeRead(
+    val data: VertexShapeData,
+    /** Whether the enclosing shape node's guarded `U64` is on the wire. */
+    val shapeNodeBindings: Boolean,
+)
+
+/**
+ * Resolves the guarded `U64` fields' presence from the bytes that are actually left in the
+ * element body — the lenient-read half of the doctrine (DESIGN.md, "Lenient when reading,
+ * strict when writing").
+ *
+ * [r] stands right after the last unconditional field preceding the first guarded `U64`
+ * (Quantization Parameters in JT 9, the first Vertex Binding in JT 10). [fixedTailBytes] is
+ * the width of the unconditional fields the enclosing element still writes after its Vertex
+ * Shape Data — 0 for the elements that end with it, Version Number + Area Factor for the
+ * polyline and point sets — and [nodeGuard] says whether that element ends in a guarded `U64`
+ * of its own (9.5 Figs. 33/34, v10 Fig. 41).
+ *
+ * Returns *(Vertex Shape Data field present, shape node field present)*. When the remaining
+ * length admits exactly one combination it is the answer outright; when it admits two (the
+ * mixed cases, both fields being 8 bytes wide) the Version Number at the candidate offset
+ * breaks the tie, and if that does not discriminate either the read is refused rather than
+ * guessed — leniency stops where the evidence does. When the length admits no combination at
+ * all the append-only reading is used — every guarded field present, see "Local version
+ * guards mean `>= N`" — and the frame's strict length check then names the failure.
+ */
+private fun resolveGuardedBindings(
+    r: ByteReader,
+    g: LsgGeneration,
+    vertexShapeGuard: Boolean,
+    fixedTailBytes: Int,
+    nodeGuard: Boolean,
+): Pair<Boolean, Boolean> {
+    val remaining = r.remaining
+    val shapeOptions = if (vertexShapeGuard) listOf(true, false) else listOf(false)
+    val nodeOptions = if (nodeGuard) listOf(true, false) else listOf(false)
+    val fits =
+        shapeOptions.flatMap { inShapeData -> nodeOptions.map { inNode -> inShapeData to inNode } }
+            .filter { (inShapeData, inNode) ->
+                (if (inShapeData) 8 else 0) + fixedTailBytes + (if (inNode) 8 else 0) == remaining
+            }
+    if (fits.size == 1) return fits.single()
+    if (fits.isEmpty()) return vertexShapeGuard to nodeGuard
+    // Both mixed readings fit the length. The one whose Version Number lands on a documented
+    // value wins; if that does not discriminate either, the bytes genuinely do not say which
+    // field is on the wire, and a guess would put an invented decomposition into a lossless
+    // model. Refuse instead — the frame carries the element opaquely with a named note.
+    val plausible = fits.filter { (inShapeData, _) -> plausibleVersionAt(r, g, if (inShapeData) 8 else 0) }
+    if (plausible.size == 1) return plausible.single()
+    throw JtFormatException(
+        "the $remaining trailing bytes of this element body fit ${fits.size} readings of the guarded " +
+            "U64 vertex binding fields, and the version numbers at the candidate offsets do not discriminate them",
+    )
+}
+
+/**
+ * Peeks the enclosing shape node's Version Number [offset] bytes ahead without consuming it,
+ * and tests it against the value set the figures document (9.5 Figs. 33/34: `0x0002` is the
+ * highest valid value).
+ */
+private fun plausibleVersionAt(
+    r: ByteReader,
+    g: LsgGeneration,
+    offset: Int,
+): Boolean {
+    val mark = r.position
+    return try {
+        r.position = mark + offset
+        r.readVersionNumber(g) in 1..2
+    } catch (_: JtFormatException) {
+        false
+    } finally {
+        r.position = mark
+    }
+}
+
 private fun readVertexShapeData(
     r: ByteReader,
     g: LsgGeneration,
-): VertexShapeData {
+    fixedTailBytes: Int = 0,
+    nodeGuard: Boolean = false,
+): VertexShapeRead {
     val shape = readBaseShapeData(r, g)
     val version = r.readVersionNumber(g)
     val bindings = r.readU64()
     return if (g == LsgGeneration.V9) {
-        // JT 9 layout: quantization parameters and (version >= 2) a second binding field.
-        // Byte consumption fixture-verified; see DESIGN.md for the limits of that evidence.
+        // 9.5 Figure 30: Quantization Parameters, then a second `U64 : Vertex Binding` that
+        // belongs to local version 1 and is therefore present from version 1 upwards.
         val quantization =
             QuantizationParameters(
                 r.readU8().toInt(),
@@ -236,10 +323,13 @@ private fun readVertexShapeData(
                 r.readU8().toInt(),
                 r.readU8().toInt(),
             )
-        val bindings2 = if (version >= 2) r.readU64() else null
-        VertexShapeData(shape, version, bindings, quantization, bindings2)
+        val (inShapeData, inNode) = resolveGuardedBindings(r, g, true, fixedTailBytes, nodeGuard)
+        val bindings2 = if (inShapeData) r.readU64() else null
+        VertexShapeRead(VertexShapeData(shape, version, bindings, quantization, bindings2), inNode)
     } else {
-        VertexShapeData(shape, version, bindings, null, null)
+        // v10 Figure 39 stops after the first binding; only the enclosing node may add one.
+        val (_, inNode) = resolveGuardedBindings(r, g, false, fixedTailBytes, nodeGuard)
+        VertexShapeRead(VertexShapeData(shape, version, bindings, null, null), inNode)
     }
 }
 
@@ -257,9 +347,10 @@ private fun writeVertexShapeData(
         w.writeU8(quantization.normalBitsFactor.toUByte())
         w.writeU8(quantization.bitsPerTextureCoord.toUByte())
         w.writeU8(quantization.bitsPerColour.toUByte())
-        if (data.version >= 2) {
-            w.writeU64(data.vertexBindings2 ?: data.vertexBindings)
-        }
+        // Presence is a model fact: emit Figure 30's guarded field exactly when it was read.
+        // Re-deriving it from the version number invents eight bytes for a body that legally
+        // omits them.
+        data.vertexBindings2?.let { w.writeU64(it) }
     }
 }
 
@@ -587,7 +678,7 @@ private object VertexShapeNodeCodec : LsgElementCodec(ObjectTypeIds.VERTEX_SHAPE
         r: ByteReader,
         ctx: LsgDecodeContext,
         objectId: Int,
-    ) = VertexShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation))
+    ) = VertexShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation).data)
 
     override fun encode(
         w: ByteWriter,
@@ -602,7 +693,7 @@ private object TriStripSetShapeNodeCodec :
         r: ByteReader,
         ctx: LsgDecodeContext,
         objectId: Int,
-    ) = TriStripSetShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation))
+    ) = TriStripSetShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation).data)
 
     override fun encode(
         w: ByteWriter,
@@ -618,8 +709,14 @@ private object PolylineSetShapeNodeCodec :
         ctx: LsgDecodeContext,
         objectId: Int,
     ): PolylineSetShapeNodeElement {
-        val vertexShape = readVertexShapeData(r, ctx.generation)
-        return PolylineSetShapeNodeElement(objectId, vertexShape, r.readVersionNumber(ctx.generation), r.readF32())
+        val g = ctx.generation
+        // 9.5 Figure 33 ends the element with a guarded `U64: Vertex Bindings`; v10 Figure 40
+        // has no such field at all, so only the JT 9 layout can carry one.
+        val read = readVertexShapeData(r, g, versionNumberWidth(g) + 4, g == LsgGeneration.V9)
+        val version = r.readVersionNumber(g)
+        val areaFactor = r.readF32()
+        val bindings = if (read.shapeNodeBindings) r.readU64() else null
+        return PolylineSetShapeNodeElement(objectId, read.data, version, areaFactor, bindings)
     }
 
     override fun encode(
@@ -631,6 +728,7 @@ private object PolylineSetShapeNodeCodec :
         writeVertexShapeData(w, g, element.vertexShape)
         w.writeVersionNumber(g, element.version)
         w.writeF32(element.areaFactor)
+        element.vertexBindings?.let { w.writeU64(it) }
     }
 }
 
@@ -641,12 +739,14 @@ private object PointSetShapeNodeCodec :
         ctx: LsgDecodeContext,
         objectId: Int,
     ): PointSetShapeNodeElement {
-        val vertexShape = readVertexShapeData(r, ctx.generation)
-        val version = r.readVersionNumber(ctx.generation)
+        val g = ctx.generation
+        // 9.5 Figure 34 and v10 Figure 41 agree field for field, including the guarded
+        // `U64: Vertex Bindings` — so the guard applies in every generation.
+        val read = readVertexShapeData(r, g, versionNumberWidth(g) + 4, true)
+        val version = r.readVersionNumber(g)
         val areaFactor = r.readF32()
-        // Figure 41: JT 10 appends a U64 binding field when the local version is 1.
-        val bindings = if (ctx.generation != LsgGeneration.V9 && version == 1) r.readU64() else null
-        return PointSetShapeNodeElement(objectId, vertexShape, version, areaFactor, bindings)
+        val bindings = if (read.shapeNodeBindings) r.readU64() else null
+        return PointSetShapeNodeElement(objectId, read.data, version, areaFactor, bindings)
     }
 
     override fun encode(
@@ -658,9 +758,7 @@ private object PointSetShapeNodeCodec :
         writeVertexShapeData(w, g, element.vertexShape)
         w.writeVersionNumber(g, element.version)
         w.writeF32(element.areaFactor)
-        if (g != LsgGeneration.V9 && element.version == 1) {
-            w.writeU64(element.vertexBindings ?: 0u)
-        }
+        element.vertexBindings?.let { w.writeU64(it) }
     }
 }
 
@@ -670,7 +768,7 @@ private object PolygonSetShapeNodeCodec :
         r: ByteReader,
         ctx: LsgDecodeContext,
         objectId: Int,
-    ) = PolygonSetShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation))
+    ) = PolygonSetShapeNodeElement(objectId, readVertexShapeData(r, ctx.generation).data)
 
     override fun encode(
         w: ByteWriter,
@@ -707,14 +805,27 @@ private object PrimitiveSetShapeNodeCodec :
         ctx: LsgDecodeContext,
         objectId: Int,
     ): PrimitiveSetShapeNodeElement {
-        val shape = readBaseShapeData(r, ctx.generation)
+        val g = ctx.generation
+        val shape = readBaseShapeData(r, g)
+        val version = r.readVersionNumber(g)
+        // 9.5 Figure 37 carries `I32 : Texture Coord Binding` and `I32 : Color Binding` where
+        // v10 Figure 44 fuses both into one `U64 : Vertex Bindings`. Same eight bytes, two
+        // different decompositions — reading the v10 one in JT 9 records a wrong model.
+        val v9 = g == LsgGeneration.V9
+        val vertexBindings = if (v9) null else r.readU64()
+        val textureCoordBinding = if (v9) r.readI32() else null
+        val colourBinding = if (v9) r.readI32() else null
+        val texCoordGenType = r.readI32()
+        val version2 = r.readVersionNumber(g)
         return PrimitiveSetShapeNodeElement(
             objectId,
             shape,
-            r.readVersionNumber(ctx.generation),
-            r.readU64(),
-            r.readI32(),
-            r.readVersionNumber(ctx.generation),
+            version,
+            vertexBindings,
+            textureCoordBinding,
+            colourBinding,
+            texCoordGenType,
+            version2,
             PrimitiveSetQuantizationParameters(r.readU8().toInt(), r.readU8().toInt()),
         )
     }
@@ -727,7 +838,12 @@ private object PrimitiveSetShapeNodeCodec :
         element as PrimitiveSetShapeNodeElement
         writeBaseShapeData(w, g, element.shape)
         w.writeVersionNumber(g, element.version)
-        w.writeU64(element.vertexBindings)
+        if (g == LsgGeneration.V9) {
+            w.writeI32(element.textureCoordBinding ?: 0)
+            w.writeI32(element.colourBinding ?: 0)
+        } else {
+            w.writeU64(element.vertexBindings ?: 0u)
+        }
         w.writeI32(element.texCoordGenType)
         w.writeVersionNumber(g, element.version2)
         w.writeU8(element.quantization.bitsPerVertex.toUByte())

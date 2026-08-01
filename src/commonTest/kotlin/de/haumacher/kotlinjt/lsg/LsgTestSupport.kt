@@ -137,11 +137,52 @@ internal fun ByteWriter.writeTestBaseShapeData(generation: LsgGeneration) {
     writeF32(0f) // compression level
 }
 
-/** Vertex Shape Data fields (Figure 39); JT 9 quantization + conditional second binding. */
+/**
+ * The model counterpart of [writeTestBaseShapeData] — the same fields, value for value, so a
+ * strict-write test can assert that a hand-built model serializes to the hand-built bytes.
+ */
+internal fun testBaseShapeData(generation: LsgGeneration): BaseShapeData =
+    BaseShapeData(
+        BaseNodeData(1, 0u, emptyList()),
+        1,
+        if (generation == LsgGeneration.V9) BBoxF32(Vec3F32(9f, 9f, 9f), Vec3F32(9f, 9f, 9f)) else null,
+        BBoxF32(Vec3F32(-1f, -2f, -3f), Vec3F32(1f, 2f, 3f)),
+        42.5f,
+        CountRange(10, 20),
+        CountRange(1, 1),
+        CountRange(5, 6),
+        0u,
+        0f,
+    )
+
+/** The model counterpart of [writeTestVertexShapeData]. */
+internal fun testVertexShapeData(
+    generation: LsgGeneration,
+    version: Int = if (generation == LsgGeneration.V9) 2 else 1,
+    bindings: ULong = 0x3u,
+    guardedBindings: ULong? = if (generation == LsgGeneration.V9) bindings else null,
+): VertexShapeData =
+    VertexShapeData(
+        testBaseShapeData(generation),
+        version,
+        bindings,
+        if (generation == LsgGeneration.V9) QuantizationParameters(12, 3, 10, 8) else null,
+        guardedBindings,
+    )
+
+/**
+ * Vertex Shape Data fields (9.5 Figure 30 / v10 Figure 39); JT 9 adds the Quantization
+ * Parameters and the guarded second `U64 : Vertex Binding`.
+ *
+ * [guardedBindings] is the value of that second field, or `null` to leave it off the wire —
+ * the encoding a producer writes if it reads Figure 30's `Version Number == 1` literally.
+ * The default follows the append-only reading of §9.4 (present from version 1 upwards).
+ */
 internal fun ByteWriter.writeTestVertexShapeData(
     generation: LsgGeneration,
     version: Int = if (generation == LsgGeneration.V9) 2 else 1,
     bindings: ULong = 0x3u,
+    guardedBindings: ULong? = if (generation == LsgGeneration.V9) bindings else null,
 ) {
     writeTestBaseShapeData(generation)
     if (generation == LsgGeneration.V9) writeI16(version.toShort()) else writeU8(version.toUByte())
@@ -151,7 +192,7 @@ internal fun ByteWriter.writeTestVertexShapeData(
         writeU8(3u)
         writeU8(10u)
         writeU8(8u) // quantization parameters
-        if (version >= 2) writeU64(bindings)
+        guardedBindings?.let { writeU64(it) }
     }
 }
 

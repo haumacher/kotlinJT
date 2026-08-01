@@ -144,6 +144,49 @@ fixtures write version 2 and emit them, and the producer is **conformant**. `Lsg
 `version >= 2` was an empirical discovery of the right operator with the threshold off by one,
 which is why every fixture passed. Validation condition when widening: if any v10 element has a
 `== 1` guard over a field a version-2 body genuinely omits, the NIST round-trip will catch it.
+(Applied and validated by package P2, issue #11: the NIST 10.5 battery stayed green, so no v10
+element in the corpus depends on the narrow reading.)
+
+### The length oracle: how a guarded field's presence is actually decided (issue #11)
+
+*(Package P2, 2026-08-01.)* The `>= N` rule says what a *conformant* producer writes. The
+reader does not test it. Element bodies are decoded on a sub-reader bounded to the framed body,
+so `remaining` is an exact oracle, and the guarded `U64` fields of 9.5 Figures 30, 33 and 34 are
+resolved from it (`LsgCodecs.resolveGuardedBindings`):
+
+| element | bytes after Quantization Parameters | reading |
+|---|---|---|
+| Tri-Strip / Polygon Set / Vertex Shape Node | 0 / 8 | Figure 30's field absent / present |
+| Polyline Set, Point Set | 6 / 14 / 22 | neither / exactly one / both |
+
+The evaluation point matters: it has to sit after Base Node Data's variable-length attribute
+list, i.e. *inside* the Vertex Shape Data read, which is why that function returns the enclosing
+node's presence decision alongside its own data. Both 9.5 fixtures land on 22 in all 29 shape
+nodes; the NIST v10 polylines land on their 5-byte tail with no guarded field, as v10 Figure 40
+draws it.
+
+The 14-byte case fits two readings of equal width. The `I16`/`U8` Version Number at the
+candidate offset breaks the tie against the value set the figures document (`1..2`); **if that
+does not discriminate either, the read is refused** — `ELEMENT_DECODE_FAILED`, bytes carried
+opaquely. Guessing which of two 8-byte fields is on the wire would put an invented decomposition
+into a model whose whole contract is that it is a projection of the bytes. Leniency stops where
+the evidence does.
+
+**No `LoadNote` for an accepted variant here, deliberately.** The doctrine asks for a named note
+where an off-document encoding is *material*, and none of the accepted variants is:
+
+- *both fields present* (what both 9.5 producers write) **is** the document's encoding under the
+  `>= N` rule — a note would fire on all 29 shape nodes of every NetAllied file and mean nothing;
+- *both absent* is what a producer reading `== 1` literally emits: unambiguous by length, fully
+  recorded by the model's nullability, byte-exact on re-serialization — nothing is guessed and
+  nothing is lost;
+- *the mixed cases* are accepted only when the version number positively selects one of them,
+  and refused by name otherwise.
+
+Silence therefore still means "nothing was guessed and nothing was lost", which is the property
+consumers rely on. The variant itself is never invisible: it is a field of the model
+(`VertexShapeData.vertexBindings2`, `PolylineSetShapeNodeElement.vertexBindings`,
+`PointSetShapeNodeElement.vertexBindings`), and the writers emit exactly what those fields hold.
 
 ## The JT 9.5 reference (Rev-D) and what it changed in this record
 
@@ -164,7 +207,9 @@ What that pass did to the deltas recorded below:
   the LSG Segment ID, not an addition) · delta 14 (the "reserved 12-byte tail" is the documented
   TopoMesh Compressed Rep Data **V2** tail, 9.5 Fig. 92) · delta 17 (Rev-D Appendix C §2.2 *does*
   describe the bitlength wire format, statement for statement) · delta 36 (Figure 126's guard
-  encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right).
+  encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right) ·
+  delta 9, corrected and closed by package P2 below (9.5 Fig. 30's guard is `>= 1`, not
+  `>= 2`, and the identity of the second `U64` is the figure's own repeat of the first).
 - **Refuted as a claim, though the behaviour stands:** the statement in `LwpaDocument.kt`, this
   file and `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It
   does — §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries.
@@ -302,11 +347,16 @@ table) and pinned by the v9 halves of the per-figure codec tests.
    box. (The writer emits the untransformed box for the reserved field when a model has none.)
 9. **Vertex Shape Data: v9 = I16 version, U64 vertex bindings, Quantization Parameters
    (4 × U8: bits per vertex / normal bits factor / bits per texture coord / bits per colour),
-   and for version ≥ 2 a second U64 binding field.** Byte-consumption verified: the fixture's
-   shape nodes carry version 2 and exactly 22 post-shape bytes. Evidence limit recorded
-   honestly: those 22 bytes are all zero, so alternative field groupings of the same width
-   would also fit; the chosen layout follows the v9-generation lineage of the v10 U64 field.
-   A contradicting file falls back to opaque-with-note via the strict length check.
+   and a second U64 binding field from local version 1 upwards.** ~~and for version ≥ 2 a
+   second U64 binding field~~ — the original threshold was an empirical guess, corrected by
+   the 9.5 document: **§7.2.1.1.1.10.2.1, Figure 30, p.48** draws the second box as
+   `U64 : Vertex Binding`, guarded `Version Number == 1`, which under §9.4's append-only local
+   versions means "belongs to version 1", i.e. present from 1 up (see *Local version guards
+   mean `>= N`*). The original entry's honest evidence limit — "those 22 bytes are all zero,
+   so alternative groupings would fit" — is also closed: the figure titles both boxes
+   identically, and in all 29 shape nodes of the two 9.5 fixtures the second value equals the
+   first, so it is the same field repeated, exactly as drawn. Presence is now resolved from the
+   body's remaining length and recorded in the model, never re-derived on write.
 10. **Base Attribute Data: v9 has no Field Final Flags** (I16 version, U8 state flags, U32
     field inhibit flags). Evidence: both material elements parse to exact length only without
     the v10 U32; with it, the RGBA block would misalign by four bytes.
@@ -318,6 +368,17 @@ table) and pinned by the v9 halves of the per-figure codec tests.
 12. **The Property Table layout is shared by both generations** (I16 version even in v10,
     Figure 78). Evidence: the fixture's 694-byte tail parses to exactly 40 element property
     tables with zero leftover; all key/value object ids resolve to decoded property atoms.
+42. **Polyline Set Shape Node: v9 appends a guarded `U64: Vertex Bindings` that v10 does not
+    have; Primitive Set Shape Node: v9 splits v10's fused `U64` into two `I32` bindings.**
+    (Numbered in this record's append-only sequence, placed with its v9 LSG siblings.)
+    Citations: **9.5 §7.2.1.1.1.10.4, Figure 33, p.50** — Vertex Shape Data, `I16 Version`,
+    `F32 Area Factor`, `(Version Number == 1) U64: Vertex Bindings`, where v10 Figure 40 stops
+    after the Area Factor; and **9.5 §7.2.1.1.1.10.8, Figure 37, p.53** — `I32 : Texture Coord
+    Binding` + `I32 : Color Binding` where v10 Figure 44 has one `U64: Vertex Bindings` at the
+    same offset. The Primitive Set delta is byte-neutral, so it never showed up as a length
+    error; the JT 9 path simply recorded `(texCoord << 32) | colour` (or its reverse) as one
+    opaque number. No fixture in the corpus carries a Primitive Set Shape Node, so this is
+    spec-derived and unexercised by real bytes — the strict length check still protects it.
 
 ## Layer 1: Shape LOD bodies (issue #4)
 
