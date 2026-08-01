@@ -102,11 +102,14 @@ class LsgPropertyCodecTest {
                         writeI16(15)
                         writeI16(50)
                         writeI16(8)
+                        // 10.5 appends an F32 (observed −4.0 — DESIGN.md delta 26).
+                        if (generation == LsgGeneration.V10_5) writeF32(-4f)
                     }
                 val element = roundTripTyped(bytes, order, generation) as DatePropertyAtomElement
                 assertEquals(2020, element.year)
                 assertEquals(10, element.month)
                 assertEquals(8, element.second)
+                assertEquals(if (generation == LsgGeneration.V10_5) -4f else null, element.trailingField)
             }
         }
 
@@ -123,13 +126,14 @@ class LsgPropertyCodecTest {
                         writeGuid(segmentId)
                         writeI32(7) // segment type: Shape LOD0
                         writeI32(79) // payload object id
-                        writeI32(1) // reserved
+                        // 10.5 drops the reserved field (DESIGN.md delta 25).
+                        if (generation != LsgGeneration.V10_5) writeI32(1) // reserved
                     }
                 val element = roundTripTyped(bytes, order, generation) as LateLoadedPropertyAtomElement
                 assertEquals(segmentId, element.segmentId)
                 assertEquals(7, element.segmentType)
                 assertEquals(79, element.payloadObjectId)
-                assertEquals(1, element.reserved)
+                assertEquals(if (generation == LsgGeneration.V10_5) null else 1, element.reserved)
             }
         }
 

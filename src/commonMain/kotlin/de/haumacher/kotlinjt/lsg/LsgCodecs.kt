@@ -9,18 +9,27 @@ import de.haumacher.kotlinjt.io.Guid
 import de.haumacher.kotlinjt.io.toBytes
 
 /**
- * The two wire-format generations the LSG codecs distinguish. The v10 reference documents
- * only the v10 layouts; the v9 deltas are established against the real fixture and recorded
- * in DESIGN.md. Where a v9 layout is *not* established, the type decodes in [V10] only and
- * is carried opaquely (with a named note) in [V9] — never guessed.
+ * The wire-format generations the LSG codecs distinguish. The v10 reference documents only
+ * the v10.0 layouts; the v9 deltas and the 10.5 deltas are established against real fixtures
+ * and recorded in DESIGN.md (v9: the NetAllied 9.5 file; 10.5: the NIST NX file — deltas
+ * 23–26). Where a layout is *not* established for a generation, the type is carried opaquely
+ * (with a named note) — never guessed.
  */
 enum class LsgGeneration {
     V9,
     V10,
+
+    /** JT 10.5+: the v10 layouts plus the fixture-established 10.5 deltas. */
+    V10_5,
     ;
 
     companion object {
-        fun of(version: JtVersion): LsgGeneration = if (version.major >= 10) V10 else V9
+        fun of(version: JtVersion): LsgGeneration =
+            when {
+                version.major < 10 -> V9
+                version.major == 10 && version.minor < 5 -> V10
+                else -> V10_5
+            }
     }
 }
 
@@ -37,7 +46,7 @@ internal class LsgDecodeContext(
 private fun ByteReader.readVersionNumber(generation: LsgGeneration): Int =
     when (generation) {
         LsgGeneration.V9 -> readI16().toInt()
-        LsgGeneration.V10 -> readU8().toInt()
+        LsgGeneration.V10, LsgGeneration.V10_5 -> readU8().toInt()
     }
 
 private fun ByteWriter.writeVersionNumber(
@@ -46,8 +55,21 @@ private fun ByteWriter.writeVersionNumber(
 ) {
     when (generation) {
         LsgGeneration.V9 -> writeI16(value.toShort())
-        LsgGeneration.V10 -> writeU8(value.toUByte())
+        LsgGeneration.V10, LsgGeneration.V10_5 -> writeU8(value.toUByte())
     }
+}
+
+/**
+ * The trailing I32 the 10.5 generation appends to every element carrying Base Attribute
+ * Data — after the type-specific fields, observed −1 throughout (DESIGN.md delta 24).
+ */
+private fun ByteReader.readAttributeTail(generation: LsgGeneration): Int? = if (generation == LsgGeneration.V10_5) readI32() else null
+
+private fun ByteWriter.writeAttributeTail(
+    generation: LsgGeneration,
+    tail: Int?,
+) {
+    if (generation == LsgGeneration.V10_5) writeI32(tail ?: -1)
 }
 
 /** Reads an I32 element count that is about to size a list; bounds it against the input. */
@@ -249,7 +271,7 @@ private fun readBaseAttributeData(
     val stateFlags = r.readU8().toInt()
     val inhibit = r.readU32()
     // Field Final Flags are a JT 10 addition (fixture-verified absent in 9.5).
-    val final = if (g == LsgGeneration.V10) r.readU32() else null
+    val final = if (g != LsgGeneration.V9) r.readU32() else null
     return BaseAttributeData(version, stateFlags, inhibit, final)
 }
 
@@ -261,7 +283,7 @@ private fun writeBaseAttributeData(
     w.writeVersionNumber(g, data.version)
     w.writeU8(data.stateFlags.toUByte())
     w.writeU32(data.fieldInhibitFlags)
-    if (g == LsgGeneration.V10) {
+    if (g != LsgGeneration.V9) {
         w.writeU32(data.fieldFinalFlags ?: 0u)
     }
 }
@@ -332,7 +354,7 @@ internal abstract class LsgElementCodec(
     /** `false` for types whose JT 9 wire layout is not established — V9 carries them opaquely. */
     val v9Layout: Boolean = true,
 ) {
-    fun decodableIn(generation: LsgGeneration): Boolean = generation == LsgGeneration.V10 || v9Layout
+    fun decodableIn(generation: LsgGeneration): Boolean = generation != LsgGeneration.V9 || v9Layout
 
     abstract fun decode(
         r: ByteReader,
@@ -368,6 +390,8 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
         objectId: Int,
     ): PartitionNodeElement {
         val group = readGroupNodeData(r, ctx.generation)
+        // JT 10.5 inserts a version number the v10.0 reference does not show (delta 23).
+        val version = if (ctx.generation == LsgGeneration.V10_5) r.readVersionNumber(ctx.generation) else null
         val flags = r.readI32()
         val fileName = r.readMbString()
         val transformedBBox = r.readBBoxF32()
@@ -375,9 +399,13 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
         val vertexCountRange = r.readCountRange()
         val nodeCountRange = r.readCountRange()
         val polygonCountRange = r.readCountRange()
-        val untransformedBBox = if (flags and 1 != 0) r.readBBoxF32() else null
+        // Figure 23: the untransformed box follows exactly when flags bit 0 is set. The 10.5
+        // producer observed sets the bit *without* the box (delta 23); since the box is the
+        // final field, its presence is decided by the remaining length — the strict
+        // full-consumption check turns every other combination into an opaque carry.
+        val untransformedBBox = if (flags and 1 != 0 && r.remaining >= 24) r.readBBoxF32() else null
         return PartitionNodeElement(
-            objectId, group, flags, fileName, transformedBBox, area,
+            objectId, group, version, flags, fileName, transformedBBox, area,
             vertexCountRange, nodeCountRange, polygonCountRange, untransformedBBox,
         )
     }
@@ -389,6 +417,9 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
     ) {
         element as PartitionNodeElement
         writeGroupNodeData(w, g, element.group)
+        if (g == LsgGeneration.V10_5) {
+            w.writeVersionNumber(g, element.version ?: 1)
+        }
         w.writeI32(element.partitionFlags)
         w.writeMbString(element.fileName)
         w.writeBBoxF32(element.transformedBBox)
@@ -614,7 +645,7 @@ private object PointSetShapeNodeCodec :
         val version = r.readVersionNumber(ctx.generation)
         val areaFactor = r.readF32()
         // Figure 41: JT 10 appends a U64 binding field when the local version is 1.
-        val bindings = if (ctx.generation == LsgGeneration.V10 && version == 1) r.readU64() else null
+        val bindings = if (ctx.generation != LsgGeneration.V9 && version == 1) r.readU64() else null
         return PointSetShapeNodeElement(objectId, vertexShape, version, areaFactor, bindings)
     }
 
@@ -627,7 +658,7 @@ private object PointSetShapeNodeCodec :
         writeVertexShapeData(w, g, element.vertexShape)
         w.writeVersionNumber(g, element.version)
         w.writeF32(element.areaFactor)
-        if (g == LsgGeneration.V10 && element.version == 1) {
+        if (g != LsgGeneration.V9 && element.version == 1) {
             w.writeU64(element.vertexBindings ?: 0u)
         }
     }
@@ -726,10 +757,11 @@ private object MaterialAttributeCodec : LsgElementCodec(ObjectTypeIds.MATERIAL_A
         val specular = r.readRgba()
         val emission = r.readRgba()
         val shininess = r.readF32()
-        val reflectivity = if (ctx.generation == LsgGeneration.V10 || version >= 2) r.readF32() else null
-        val bumpiness = if (ctx.generation == LsgGeneration.V10) r.readF32() else null
+        val reflectivity = if (ctx.generation != LsgGeneration.V9 || version >= 2) r.readF32() else null
+        val bumpiness = if (ctx.generation != LsgGeneration.V9) r.readF32() else null
+        val tail = r.readAttributeTail(ctx.generation)
         return MaterialAttributeElement(
-            objectId, base, version, dataFlags, ambient, diffuse, specular, emission,
+            objectId, base.copy(reservedTail = tail), version, dataFlags, ambient, diffuse, specular, emission,
             shininess, reflectivity, bumpiness,
         )
     }
@@ -748,12 +780,13 @@ private object MaterialAttributeCodec : LsgElementCodec(ObjectTypeIds.MATERIAL_A
         w.writeRgba(element.specularColour)
         w.writeRgba(element.emissionColour)
         w.writeF32(element.shininess)
-        if (g == LsgGeneration.V10 || element.version >= 2) {
+        if (g != LsgGeneration.V9 || element.version >= 2) {
             w.writeF32(element.reflectivity ?: 0f)
         }
-        if (g == LsgGeneration.V10) {
+        if (g != LsgGeneration.V9) {
             w.writeF32(element.bumpiness ?: 1f)
         }
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -765,7 +798,9 @@ private object DrawStyleAttributeCodec :
         objectId: Int,
     ): DrawStyleAttributeElement {
         val base = readBaseAttributeData(r, ctx.generation)
-        return DrawStyleAttributeElement(objectId, base, r.readVersionNumber(ctx.generation), r.readU8().toInt())
+        val version = r.readVersionNumber(ctx.generation)
+        val dataFlags = r.readU8().toInt()
+        return DrawStyleAttributeElement(objectId, base.copy(reservedTail = r.readAttributeTail(ctx.generation)), version, dataFlags)
     }
 
     override fun encode(
@@ -777,6 +812,7 @@ private object DrawStyleAttributeCodec :
         writeBaseAttributeData(w, g, element.baseAttribute)
         w.writeVersionNumber(g, element.version)
         w.writeU8(element.dataFlags.toUByte())
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -790,7 +826,8 @@ private object LightSetAttributeCodec :
         val base = readBaseAttributeData(r, ctx.generation)
         val version = r.readVersionNumber(ctx.generation)
         val count = r.readCount("light object id", 4)
-        return LightSetAttributeElement(objectId, base, version, List(count) { r.readI32() })
+        val ids = List(count) { r.readI32() }
+        return LightSetAttributeElement(objectId, base.copy(reservedTail = r.readAttributeTail(ctx.generation)), version, ids)
     }
 
     override fun encode(
@@ -803,6 +840,7 @@ private object LightSetAttributeCodec :
         w.writeVersionNumber(g, element.version)
         w.writeI32(element.lightObjectIds.size)
         for (id in element.lightObjectIds) w.writeI32(id)
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -814,7 +852,15 @@ private object InfiniteLightAttributeCodec :
         objectId: Int,
     ): InfiniteLightAttributeElement {
         val baseLight = readBaseLightData(r, ctx.generation)
-        return InfiniteLightAttributeElement(objectId, baseLight, r.readVersionNumber(ctx.generation), r.readVec3F32())
+        val version = r.readVersionNumber(ctx.generation)
+        val direction = r.readVec3F32()
+        val tail = r.readAttributeTail(ctx.generation)
+        return InfiniteLightAttributeElement(
+            objectId,
+            baseLight.copy(baseAttribute = baseLight.baseAttribute.copy(reservedTail = tail)),
+            version,
+            direction,
+        )
     }
 
     override fun encode(
@@ -826,6 +872,7 @@ private object InfiniteLightAttributeCodec :
         writeBaseLightData(w, g, element.baseLight)
         w.writeVersionNumber(g, element.version)
         w.writeVec3F32(element.direction)
+        w.writeAttributeTail(g, element.baseLight.baseAttribute.reservedTail)
     }
 }
 
@@ -837,15 +884,22 @@ private object PointLightAttributeCodec :
         objectId: Int,
     ): PointLightAttributeElement {
         val baseLight = readBaseLightData(r, ctx.generation)
+        val version = r.readVersionNumber(ctx.generation)
+        val position = r.readVec4F32()
+        val attenuation = AttenuationCoefficients(r.readF32(), r.readF32(), r.readF32())
+        val spreadAngle = r.readF32()
+        val spotDirection = r.readVec3F32()
+        val spotIntensity = r.readI32()
+        val tail = r.readAttributeTail(ctx.generation)
         return PointLightAttributeElement(
             objectId,
-            baseLight,
-            r.readVersionNumber(ctx.generation),
-            r.readVec4F32(),
-            AttenuationCoefficients(r.readF32(), r.readF32(), r.readF32()),
-            r.readF32(),
-            r.readVec3F32(),
-            r.readI32(),
+            baseLight.copy(baseAttribute = baseLight.baseAttribute.copy(reservedTail = tail)),
+            version,
+            position,
+            attenuation,
+            spreadAngle,
+            spotDirection,
+            spotIntensity,
         )
     }
 
@@ -864,6 +918,7 @@ private object PointLightAttributeCodec :
         w.writeF32(element.spreadAngle)
         w.writeVec3F32(element.spotDirection)
         w.writeI32(element.spotIntensity)
+        w.writeAttributeTail(g, element.baseLight.baseAttribute.reservedTail)
     }
 }
 
@@ -875,12 +930,15 @@ private object LinestyleAttributeCodec :
         objectId: Int,
     ): LinestyleAttributeElement {
         val base = readBaseAttributeData(r, ctx.generation)
+        val version = r.readVersionNumber(ctx.generation)
+        val dataFlags = r.readU8().toInt()
+        val lineWidth = r.readF32()
         return LinestyleAttributeElement(
             objectId,
-            base,
-            r.readVersionNumber(ctx.generation),
-            r.readU8().toInt(),
-            r.readF32(),
+            base.copy(reservedTail = r.readAttributeTail(ctx.generation)),
+            version,
+            dataFlags,
+            lineWidth,
         )
     }
 
@@ -894,6 +952,7 @@ private object LinestyleAttributeCodec :
         w.writeVersionNumber(g, element.version)
         w.writeU8(element.dataFlags.toUByte())
         w.writeF32(element.lineWidth)
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -905,12 +964,15 @@ private object PointstyleAttributeCodec :
         objectId: Int,
     ): PointstyleAttributeElement {
         val base = readBaseAttributeData(r, ctx.generation)
+        val version = r.readVersionNumber(ctx.generation)
+        val dataFlags = r.readU8().toInt()
+        val pointSize = r.readF32()
         return PointstyleAttributeElement(
             objectId,
-            base,
-            r.readVersionNumber(ctx.generation),
-            r.readU8().toInt(),
-            r.readF32(),
+            base.copy(reservedTail = r.readAttributeTail(ctx.generation)),
+            version,
+            dataFlags,
+            pointSize,
         )
     }
 
@@ -924,6 +986,7 @@ private object PointstyleAttributeCodec :
         w.writeVersionNumber(g, element.version)
         w.writeU8(element.dataFlags.toUByte())
         w.writeF32(element.pointSize)
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -954,7 +1017,8 @@ private object GeometricTransformAttributeCodec :
             }
             bits = bits shl 1
         }
-        return GeometricTransformAttributeElement(objectId, base, version, mask, Mx4F64(values))
+        val tail = r.readAttributeTail(ctx.generation)
+        return GeometricTransformAttributeElement(objectId, base.copy(reservedTail = tail), version, mask, Mx4F64(values))
     }
 
     override fun encode(
@@ -973,6 +1037,7 @@ private object GeometricTransformAttributeCodec :
             }
             bits = bits shl 1
         }
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -1058,7 +1123,10 @@ private object TextureCoordinateGeneratorAttributeCodec :
                 is FrameResult.Element -> nested.element
                 else -> throw JtFormatException("mapping surface of the texture coordinate generator is not a valid element frame")
             }
-        return TextureCoordinateGeneratorAttributeElement(objectId, base, version, channel, surface)
+        // 10.5 tail placement after the nested element is derived, not fixture-verified —
+        // the strict length check turns a wrong derivation into an opaque carry.
+        val tail = r.readAttributeTail(ctx.generation)
+        return TextureCoordinateGeneratorAttributeElement(objectId, base.copy(reservedTail = tail), version, channel, surface)
     }
 
     override fun encode(
@@ -1071,6 +1139,7 @@ private object TextureCoordinateGeneratorAttributeCodec :
         w.writeVersionNumber(g, element.version)
         w.writeI32(element.texCoordChannel)
         encodeElementFrame(w, g, element.mappingSurface)
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -1193,7 +1262,7 @@ private object TextureImageAttributeCodec :
         }
         return TextureImageAttributeElement(
             objectId,
-            base,
+            base.copy(reservedTail = r.readAttributeTail(ctx.generation)),
             version,
             TextureVers1Data(
                 textureType, environment, coordGen, textureChannel, texCoordChannel,
@@ -1226,6 +1295,7 @@ private object TextureImageAttributeCodec :
             w.writeI32(data.externalStorageNames.size)
             for (name in data.externalStorageNames) w.writeMbString(name)
         }
+        w.writeAttributeTail(g, element.baseAttribute.reservedTail)
     }
 }
 
@@ -1350,6 +1420,8 @@ private object DatePropertyAtomCodec : LsgElementCodec(ObjectTypeIds.DATE_PROPER
             r.readI16().toInt(),
             r.readI16().toInt(),
             r.readI16().toInt(),
+            // 10.5 appends an F32 the v10.0 reference does not document (DESIGN.md delta 26).
+            if (ctx.generation == LsgGeneration.V10_5) r.readF32() else null,
         )
     }
 
@@ -1367,6 +1439,9 @@ private object DatePropertyAtomCodec : LsgElementCodec(ObjectTypeIds.DATE_PROPER
         w.writeI16(element.hour.toShort())
         w.writeI16(element.minute.toShort())
         w.writeI16(element.second.toShort())
+        if (g == LsgGeneration.V10_5) {
+            w.writeF32(element.trailingField ?: 0f)
+        }
     }
 }
 
@@ -1385,7 +1460,8 @@ private object LateLoadedPropertyAtomCodec :
             r.readGuid(),
             r.readI32(),
             r.readI32(),
-            r.readI32(),
+            // 10.5 drops the Reserved field Figure 76 documents (DESIGN.md delta 25).
+            if (ctx.generation == LsgGeneration.V10_5) null else r.readI32(),
         )
     }
 
@@ -1400,7 +1476,10 @@ private object LateLoadedPropertyAtomCodec :
         w.writeGuid(element.segmentId)
         w.writeI32(element.segmentType)
         w.writeI32(element.payloadObjectId)
-        w.writeI32(element.reserved)
+        if (g != LsgGeneration.V10_5) {
+            // Figure 76: "guaranteed to always be greater than or equal to 1".
+            w.writeI32(element.reserved ?: 1)
+        }
     }
 }
 

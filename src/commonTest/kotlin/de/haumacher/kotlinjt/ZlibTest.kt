@@ -65,10 +65,11 @@ class ZlibTest {
     }
 
     @Test
-    fun lzmaCodecIsANamedFutureExtension() {
+    fun lzmaCodecRefusesCorruptInputWithNamedNote() {
+        // The full LZMA decode surface lives in LzmaTest; here only the codec-seam contract.
         val result = LzmaCodec.decode(testGuid(1), byteArrayOf(0).toBytes())
         val refusal = assertIs<CodecResult.Refused>(result)
-        assertEquals("UNSUPPORTED_COMPRESSION", refusal.note.name)
+        assertEquals("COMPRESSED_DATA_CORRUPT", refusal.note.name)
     }
 
     @Test

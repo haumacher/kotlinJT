@@ -35,6 +35,8 @@ class LsgNodeElementCodecTest {
                 val bytes =
                     lsgFrame(order, ObjectTypeIds.PARTITION_NODE, 1, 0) {
                         writeTestGroupNodeData(generation, children = listOf(38))
+                        // 10.5 inserts a version number here (DESIGN.md delta 23).
+                        if (generation == LsgGeneration.V10_5) writeU8(1u)
                         writeI32(1) // partition flags: untransformed box present
                         writeI32(4) // MbString "part"
                         for (ch in "part") writeU16(ch.code.toUShort())
@@ -282,12 +284,12 @@ class LsgNodeElementCodecTest {
                         writeTestVertexShapeData(generation)
                         writeTestVersionNumber(generation)
                         writeF32(1f) // area factor
-                        if (generation == LsgGeneration.V10) {
+                        if (generation != LsgGeneration.V9) {
                             writeU64(0x5uL) // version == 1: extra binding field (Figure 41)
                         }
                     }
                 val element = roundTripTyped(bytes, order, generation) as PointSetShapeNodeElement
-                if (generation == LsgGeneration.V10) {
+                if (generation != LsgGeneration.V9) {
                     assertEquals(0x5uL, element.vertexBindings)
                 } else {
                     assertNull(element.vertexBindings)

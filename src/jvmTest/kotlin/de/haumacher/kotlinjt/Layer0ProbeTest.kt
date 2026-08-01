@@ -127,8 +127,8 @@ class Layer0ProbeTest {
     private fun compressedCorruptionSpeaks(original: ByteArray): DynamicNode =
         dynamicTest("compressed corruption speaks") {
             val baseline = JtFile.parse(original)
-            val zlibSegments = baseline.segments.filter { it.compression?.algorithmCode == 2 }
-            assumeTrue(zlibSegments.isNotEmpty(), "fixture has no ZLIB segment; corruption probe not applicable")
+            val zlibSegments = baseline.segments.filter { it.compression?.algorithmCode in setOf(2, 3) }
+            assumeTrue(zlibSegments.isNotEmpty(), "fixture has no compressed segment; corruption probe not applicable")
             for (segment in zlibSegments) {
                 // 24-byte segment header + 9 compression fields, then the compressed body.
                 val bodyStart = segment.tocEntry.offset.toInt() + 24 + 9

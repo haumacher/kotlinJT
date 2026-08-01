@@ -125,6 +125,13 @@ data class BaseAttributeData(
     val fieldInhibitFlags: UInt,
     /** On the wire in JT 10 only. */
     val fieldFinalFlags: UInt?,
+    /**
+     * The JT 10.5 generation appends an I32 to every element carrying Base Attribute Data —
+     * at the *end* of the element body, after the type-specific fields (observed −1 across
+     * all 88 attribute elements of the 10.5 fixture; not documented by the v10.0 reference —
+     * DESIGN.md delta 24). `null` in the V9/V10 generations.
+     */
+    val reservedTail: Int? = null,
 )
 
 /** Base Property Atom Data (Figure 70). */
@@ -154,6 +161,8 @@ data class BaseNodeElement(
 data class PartitionNodeElement(
     override val objectId: Int,
     val group: GroupNodeData,
+    /** JT 10.5 inserts a version number before the flags (DESIGN.md delta 23); else `null`. */
+    val version: Int?,
     val partitionFlags: Int,
     val fileName: String,
     val transformedBBox: BBoxF32,
@@ -161,12 +170,18 @@ data class PartitionNodeElement(
     val vertexCountRange: CountRange,
     val nodeCountRange: CountRange,
     val polygonCountRange: CountRange,
-    /** Present exactly when bit 0 of [partitionFlags] is set. */
+    /**
+     * Present when bit 0 of [partitionFlags] is set — except that the JT 10.5 producer
+     * observed (Siemens DM 9.8) sets the bit without storing the box (DESIGN.md delta 23).
+     */
     val untransformedBBox: BBoxF32?,
 ) : NodeElement() {
     init {
-        require((partitionFlags and 1 != 0) == (untransformedBBox != null)) {
-            "untransformed bounding box presence must match partition flag bit 0"
+        // Bit 0 announces the box (Figure 23/Table 11) — but the 10.5 producer observed
+        // sets the bit without storing it (DESIGN.md delta 23), so only the reverse
+        // direction is an invariant: a stored box requires the announcing bit.
+        require(untransformedBBox == null || partitionFlags and 1 != 0) {
+            "an untransformed bounding box requires partition flag bit 0"
         }
     }
 
@@ -666,6 +681,13 @@ data class DatePropertyAtomElement(
     val hour: Int,
     val minute: Int,
     val second: Int,
+    /**
+     * The JT 10.5 generation appends an F32 the v10.0 reference does not document. The
+     * observed value (−4.0 on every atom of the 10.5 fixture) is consistent with a UTC
+     * offset in hours for the stored timestamps (NIST, US EDT) — semantics unconfirmed,
+     * carried verbatim (DESIGN.md delta 26). `null` in the V9/V10 generations.
+     */
+    val trailingField: Float? = null,
 ) : PropertyAtomElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.DATE_PROPERTY_ATOM
 }
@@ -678,7 +700,11 @@ data class LateLoadedPropertyAtomElement(
     val segmentId: Guid,
     val segmentType: Int,
     val payloadObjectId: Int,
-    val reserved: Int,
+    /**
+     * The v10.0 reference documents this I32 as "always ≥ 1"; the JT 10.5 generation drops
+     * the field entirely (DESIGN.md delta 25). `null` exactly in V10_5.
+     */
+    val reserved: Int?,
 ) : PropertyAtomElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.LATE_LOADED_PROPERTY_ATOM
 }

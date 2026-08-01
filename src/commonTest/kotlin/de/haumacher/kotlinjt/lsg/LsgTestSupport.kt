@@ -165,7 +165,18 @@ internal fun ByteWriter.writeTestBaseAttributeData(
     if (generation == LsgGeneration.V9) writeI16(1) else writeU8(1u)
     writeU8(stateFlags.toUByte())
     writeU32(inhibit)
-    if (generation == LsgGeneration.V10) writeU32(final)
+    if (generation != LsgGeneration.V9) writeU32(final)
+}
+
+/**
+ * The trailing I32 the 10.5 generation appends to attribute elements — written at the *end*
+ * of the element body, after the type-specific fields (DESIGN.md delta 24).
+ */
+internal fun ByteWriter.writeTestAttributeTail(
+    generation: LsgGeneration,
+    tail: Int = -1,
+) {
+    if (generation == LsgGeneration.V10_5) writeI32(tail)
 }
 
 /** Base Property Atom Data fields (Figure 70). */

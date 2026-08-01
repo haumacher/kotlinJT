@@ -61,10 +61,10 @@ All segment-wide codecs sit behind one interface, `SegmentCodec`, registered by 
 Compression Algorithm value: 1 = none, 2 = ZLIB, 3 = LZMA. Decoding never throws through the
 API: a codec returns `CodecResult.Decoded` or `CodecResult.Refused(note)`.
 
-- **LZMA (v10, clause 12.2.5) is a named future extension**, not implemented. Its time comes
-  with the first v10 fixture that uses it. Until then a segment flagged LZMA loads with note
-  `UNSUPPORTED_COMPRESSION` and its raw bytes fully accessible — and re-serializes
-  byte-identically.
+- ~~**LZMA (v10, clause 12.2.5) is a named future extension**, not implemented.~~ Its
+  condition ("the first v10 fixture that uses it") was met by the NIST fixture; decoding
+  landed with issue #5 — see *LZMA decoding* below. `UNSUPPORTED_COMPRESSION` remains the
+  refusal for well-formed xz features the decoder does not implement.
 
 ## Load notes — refusals speak
 
@@ -196,8 +196,8 @@ kept, offsets/TOC/header recomputed, result re-parsed) and produces a legal file
 **model equality**, not byte equality — the compressed bytes of a re-deflated stream are not
 canonical, models are. `encodeLsgSegmentPayload` writes the segment-wide fields for a fresh
 LSG payload: v9 → ZLIB (flag 2, algorithm 2, level 6); v10 → stored (algorithm 1), the
-simplest legal encoding until an LZMA *encoder* has a real v10 fixture to prove itself
-against (the committed NIST 10.5 fixture gives the *decoder* its condition — see deferrals).
+simplest legal encoding (the LZMA *decoder* landed with issue #5; an encoder stays a
+deferral — see the table).
 
 **v9 policy.** Types whose v9 layout is fixture-verified or follows from fixture-verified
 sub-collections plus the version-width rule decode typed in v9: the whole node family
@@ -269,14 +269,21 @@ vertex/polygon count ranges. An independent open-source JT reader (OpenCASCADE's
 consulted to disambiguate field order where both spec generations' figures are garbled; all
 its claims were re-verified against the fixture bytes before adoption.
 
-**The v10 wire formats are deliberately not implemented here.** Every v10 shape body in
-reach (all 39 NIST segments) sits behind segment-wide LZMA, so no v10 layout can be
-established or even exercised; v10's Int32CDP (Figure 132: no symbol field, 7-bit value
-widths, Move-to-Front codec), its bitlength variant (Annex B's nibbler-based block scheme),
-its packed Deering code array and its shape element bodies differ from the JT 9 generation
-enough that implementing them unverifiable would be guessing. Their time comes with the
-LZMA package, which makes the NIST bodies readable. Until then v10 shape elements are
-carried opaquely with `ELEMENT_LAYOUT_UNVERIFIED`.
+**The v10 wire formats are deliberately not implemented here.** v10's Int32CDP (Figure 132:
+no symbol field, 7-bit value widths, Move-to-Front codec), its bitlength variant (Annex B's
+nibbler-based block scheme), its packed Deering code array and its shape element bodies
+differ from the JT 9 generation enough that implementing them unverifiable would be
+guessing. Until the v10 shape-body package establishes them, v10 shape elements are carried
+opaquely with `ELEMENT_LAYOUT_UNVERIFIED`. **Correction (issue #5)**: this section
+originally justified the deferral with *"every v10 shape body in reach (all 39 NIST
+segments) sits behind segment-wide LZMA, so no v10 layout can be established or even
+exercised; their time comes with the LZMA package, which makes the NIST bodies readable"* —
+that was wrong. Shape LOD segments are never segment-wide compressed (Layer 0's own
+recorded observation already showed the 39 NIST shape segments scanning as plain element
+streams); the NIST v10 bodies were readable all along. What the LZMA package *did* unlock
+is the NIST LSG, so the v10 bodies are now also cross-checkable against their declaring
+shape nodes. The deferral itself stands — unverified layouts stay unguessed — only its
+stated condition was corrected (see the deferral table).
 
 **Model ↔ bytes mapping.** `de.haumacher.kotlinjt.shape` mirrors the spec collections
 (`ShapeLodDocument` → elements + the Figure-78 property table that DESIGN.md's Layer-0
@@ -358,6 +365,90 @@ exact byte consumption pin each layout — a one-byte deviation breaks both).
     fixture body: 204 stored, 203 referenced); tolerated — the extra record stays in the
     model and re-encodes, it is just never referenced by a triangle corner.
 
+## LZMA decoding (issue #5)
+
+**What JT v10 "LZMA" actually is: the `.xz` container with an LZMA2 filter.** Clause 12.2.5
+never states a container; it names XZ Utils and lists the liblzma entry points JT
+implementations use — `lzma_easy_encoder` / `lzma_stream_decoder`, which are the `.xz`
+(not the classic `.lzma`) entry points. The fixture confirms it: all 68 flag-3/algorithm-3
+segment bodies of the NIST 10.5 file begin with the `.xz` stream magic `FD 37 7A 58 5A 00`;
+stream flags `00 04` (CRC64 check — the XZ Utils default); block header `02 00 21 01 10` =
+one filter, id 0x21 (LZMA2), one props byte, dictionary size code 0x10 (1 MiB). All 68
+streams decode under exactly this shape (59 in known compressible segment kinds; the other
+9 sit inside the unknown NX segment types 23/31, which are carried opaquely and never reach
+the codec).
+
+**Platform decision: a pure-Kotlin decoder in `commonMain`** (`codec/Xz.kt` container +
+CRC32/CRC64, `codec/Lzma.kt` LZMA2 chunk layer + LZMA1 range decoder, ported from the
+normative decoder in the public-domain LZMA SDK's specification). Rationale against the
+`expect`/`actual` alternative (JVM: org.tukaani:xz; JS: an npm lzma package): the JS side
+has no maintained, full-`.xz` decoder of trustable provenance (most npm lzma packages are
+abandoned or decode only the classic `.lzma` framing — which JT does not use); decode-only
+scope keeps the pure-Kotlin cost at ~700 lines; zero dependencies serve both targets
+identically; and 59 real-producer streams plus liblzma-written vectors (committed in
+LzmaTest, both platforms) give the port a real acceptance spine. The zlib seam precedent
+(expect/actual) does not carry over: platform zlib exists everywhere, platform xz does not.
+
+**Strictness policy.** Structure, header CRC32s, the block index and the stream footer are
+fully verified; block checks none/CRC32/CRC64 are verified (CRC64 is what the fixture and
+XZ Utils' defaults use). The defined-but-unseen SHA-256 check is consumed *without*
+verification — the XZ spec sizes all sixteen check IDs precisely so decoders can pass over
+checks they do not implement; verifying it gets its time with the first real stream that
+carries one. Refusals are two-tone and never throw through the API: corrupt/truncated
+streams → `COMPRESSED_DATA_CORRUPT`; well-formed streams using unimplemented xz features
+(non-LZMA2 filter chains, reserved check/flag bits) → `UNSUPPORTED_COMPRESSION`, raw bytes
+kept either way. **Decode-only**: the writer keeps emitting ZLIB (v9) / stored (v10) per
+the issue #1 codec policy; whole-file byte identity always re-emits raw payloads and never
+depends on re-compression.
+
+**What the 59 segments contained** (all inflate, all element-scan cleanly, each ending in
+the Figure-78 six-byte empty property table except the LSG, which carries a real one): the
+LSG (13 KB → 90 736 bytes), 14 PMI Data, 30 Meta Data, 8 XT B-Rep, 5 Wireframe, 1 MultiXT
+B-Rep. Meta data / PMI / B-rep element *bodies* remain opaque per plan (§11 package;
+B-rep opaque by doctrine).
+
+## v10.0 vs 10.5 LSG element deltas (established, with byte evidence from the NIST fixture)
+
+Continuing the delta numbering. The v10 reference documents the **10.0** wire format; the
+NIST file (`Version 10.5 JT  DM 9.8.0.0`, the Siemens writer) deviates in four places,
+established by exact byte accounting over its 1 211 LSG elements and pinned by
+`Lsg105GenerationTest` plus the fixture battery. The codecs now distinguish a third
+generation, `V10_5` (selected for `major > 10 || (major == 10 && minor >= 5)`); files
+declaring 10.0–10.4 keep the spec-derived 10.0 layouts until a fixture shows otherwise.
+
+23. **Partition Node (Figure 23): 10.5 inserts a version number (U8, observed 1) between
+    the Group Node Data and the Partition Flags — and sets flags bit 0 *without* storing
+    the untransformed bounding box.** Evidence: the single NIST partition parses to exact
+    length only with the version byte and without the box (flags = 1, body ends after the
+    polygon count range). Since the box is the element's final field, its presence is
+    decided by the remaining length; every other combination falls to the strict
+    full-consumption check (opaque carry, named note). The model invariant is accordingly
+    one-directional: a stored box requires the bit, the bit no longer implies the box.
+24. **Attribute elements (everything carrying Base Attribute Data) gain a trailing I32 at
+    the very end of the element body — after the type-specific fields — observed −1 in all
+    88 NIST attribute elements** (37 Material + 36 Geometric Transform + 15 Linestyle;
+    three independent body layouts pin the position). Not documented by the v10.0
+    reference; semantics unknown, carried verbatim (`BaseAttributeData.reservedTail`).
+    Applied to the whole attribute family as a family rule — for types absent from the
+    fixture (styles, lights, textures, and the tail-after-nested-element placement of the
+    Texture Coordinate Generator) the placement is derived, and the strict length check
+    turns a wrong derivation into an opaque carry, never a misread.
+25. **Late Loaded Property Atom (Figure 76): 10.5 drops the Reserved I32** that the v10.0
+    reference documents as "guaranteed to always be greater than or equal to 1". Evidence:
+    all 105 NIST atoms are 35-byte bodies = base + version + GUID + two I32 — four bytes
+    short of the documented layout; the v9 fixture's atoms carry the field.
+26. **Date Property Atom (Figure 75): 10.5 appends an F32.** Evidence: all 13 NIST atoms
+    trail exactly four bytes decoding as −4.0f — consistent with the UTC offset of the
+    stored timestamps (NIST, US Eastern Daylight Time), but the semantics are not
+    documented anywhere at hand, so the field is carried verbatim
+    (`DatePropertyAtomElement.trailingField`), never interpreted.
+
+With these four deltas every NIST LSG element decodes typed: 267 graph elements + 944
+property atoms + a 135-entry property table, zero notes, element-stream round-trip
+byte-identical, and the LsgProbeTest coherence probes (reference resolution, single root
+partition, property-table validity, late-loaded atoms hitting real TOC segments of the
+declared type) pass cross-producer for the first time.
+
 ## Fixture conventions (from the amendment on issue #1)
 
 - JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
@@ -367,7 +458,9 @@ exact byte consumption pin each layout — a one-byte deviation breaks both).
   JSON — including per-payload SHA-256 and the LSG element histogram — equal to the sidecar
   `<name>.expected.json` (created on first run for human review, asserted thereafter);
   byte-identical re-serialization; LSG element-stream round-trip; the model-level mutation
-  probe (skipping visibly where the LSG is not decodable, e.g. the NIST fixture's LZMA).
+  probe (skipping visibly where a stage is not applicable — since issue #5 both committed
+  fixtures run the full LSG battery; NIST still skips the tri-strip geometry stage, whose
+  v10 bodies await the v10 shape-body package).
 - No fixtures ⇒ one visibly **SKIPPED** test whose name carries the count. Verified.
 - Committed code never names a fixture file (customer part numbers). Sidecars live next to
   the fixtures, equally gitignored.
@@ -379,8 +472,9 @@ exact byte consumption pin each layout — a one-byte deviation breaks both).
 
 | What | Its time comes when |
 |---|---|
-| LZMA segment codec (v10, §12.2.5) | **condition met**: the committed NIST 10.5 fixture uses it (59 refused segments incl. the LSG) — next decoding package |
-| v10 shape element bodies + v10 Int32CDP/Int64CDP wire formats (Figures 132–137), v10 bitlength/packed-Deering variants | the LZMA package: it makes the NIST shape bodies readable, giving these layouts their first verifiable bytes (until then: opaque with `ELEMENT_LAYOUT_UNVERIFIED`) |
+| v10 shape element bodies + v10 Int32CDP/Int64CDP wire formats (Figures 132–137), v10 bitlength/packed-Deering variants | **condition met** (corrected — see the issue #4 correction above): the NIST bodies were plain bytes all along, and since issue #5 the decoded LSG cross-checks them (declared count ranges, late-loaded references) — next decoding package (until then: opaque with `ELEMENT_LAYOUT_UNVERIFIED`) |
+| XZ SHA-256 block-check verification, non-LZMA2 xz filter chains | first real stream carrying them (today: SHA-256 decodes unverified; foreign filter chains refuse with `UNSUPPORTED_COMPRESSION`) |
+| LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than stored/ZLIB permits (issue #1 policy: simplest legal encodings) |
 | Polyline/Point/Polygon/Primitive Set Shape LOD bodies (TopoMesh Compressed Rep Data V1/V2, lossless/lossy primitive set data) | first fixture carrying them (all fixture shape segments are tri-strip) |
 | Vertex colours, texture coordinates, per-vertex flags and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today) |
 | Element body parsing for meta data / PMI segments | the §11 package (LSG done issue #3, shape LOD done issue #4) |

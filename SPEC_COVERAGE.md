@@ -60,7 +60,7 @@ are tracked at section granularity with behavioral tests.
 | File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) |
 | TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) |
 | Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful |
-| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere; LSG element bodies decoded (§6, issue #3); shape LOD bodies decoded for the JT 9 generation (§7, issue #4 — v10 pending LZMA); meta data / PMI bodies stay opaque until the §11 package |
+| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere (incl. the 59 LZMA-inflated NIST streams); LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded for the JT 9 generation (§7, issue #4 — v10 pending the v10 shape-body package); meta data / PMI bodies stay opaque until the §11 package |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -70,7 +70,7 @@ are tracked at section granularity with behavioral tests.
 | Fig. 13 — TOC Entry data collection (p.21) | done | done | TocTest | v9 28-byte / v10 32-byte entry |
 | Fig. 14 — Data Segment data collection (p.22) | done | done | SyntheticFileRoundTripTest | |
 | Fig. 15 — Segment Header data collection (p.22) | done | done | SyntheticFileRoundTripTest, HostileInputTest | id/type/length mismatches → named notes |
-| Fig. 16 — Data collection (p.24) | done | done | ZlibTest, SyntheticFileRoundTripTest | ZLIB fixture-verified; flag≠2 layout spec-derived, unverified against a real file — note fallback in place |
+| Fig. 16 — Data collection (p.24) | done | done | ZlibTest, SyntheticFileRoundTripTest | ZLIB (v9) and LZMA flag 3/algorithm 3 (v10.5 NIST, 59 segments) fixture-verified; flag∉{2,3} layout spec-derived, unverified against a real file — note fallback in place |
 | Fig. 17 — Logical Element Header data collection (p.24) | done | done | ElementScanTest | |
 | Fig. 18 — Element Header data collection (p.24) | done | done | ElementScanTest | |
 | Fig. 19 — Logical Element Header Compressed data collection (p.25) | done | done | ElementScanTest, FixtureDiscoveryTest | scanned in inflated LSG of the real fixture (67 elements) |
@@ -80,23 +80,26 @@ are tracked at section granularity with behavioral tests.
 
 All §6 rows below share the version caveat established in DESIGN.md: v10 layouts per the
 reference, v9 layouts only where fixture-verified; the non-material attribute elements are
-opaque-with-note (`ELEMENT_LAYOUT_UNVERIFIED`) in v9 files. Write = re-serialization of the
+opaque-with-note (`ELEMENT_LAYOUT_UNVERIFIED`) in v9 files. Since issue #5 a third
+generation exists: **JT 10.5** deviates from the v10.0 reference in deltas 23–26
+(DESIGN.md), established against the NIST fixture's LSG — 1 211 elements, all typed,
+stream round-trip byte-identical, cross-producer coherence probes green (LsgProbeTest). Write = re-serialization of the
 typed model, byte-identical to the decoded stream (authoring writer is milestone 2).
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| LSG Segment (p.28) | done | done | LsgDocumentTest, LsgSyntheticFileTest, FixtureDiscoveryTest | fixture: 66 graph elements + 41 atoms + 40-entry property table, all typed, stream round-trip byte-identical |
+| LSG Segment (p.28) | done | done | LsgDocumentTest, LsgSyntheticFileTest, FixtureDiscoveryTest | v9 fixture: 66 graph elements + 41 atoms + 40-entry property table; NIST 10.5: 267 graph elements + 944 atoms + 135-entry property table — all typed in both, stream round-trip byte-identical |
 | Graph Elements (p.28) | done | done | LsgNodeElementCodecTest, LsgAttributeElementCodecTest | unknown/undecodable elements → opaque + named note (LsgDocumentTest) |
 | Node Elements (p.29) | done | done | LsgNodeElementCodecTest | v9 deltas 6–9 in DESIGN.md, fixture-verified |
-| Attribute Elements (p.49) | done | done | LsgAttributeElementCodecTest | v10 complete; v9: material only — others opaque-by-policy with note |
+| Attribute Elements (p.49) | done | done | LsgAttributeElementCodecTest, Lsg105GenerationTest | v10 complete; 10.5 trailing I32 on the family (delta 24 — fixture-verified for material/transform/linestyle, family-rule-derived for the rest); v9: material only — others opaque-by-policy with note |
 | Property Atom Elements (p.83) | done | done | LsgPropertyCodecTest | both generations |
 | Base Property Atom Element (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | |
 | String Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (28 in the real file) |
-| Integer Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | spec-derived, not yet fixture-verified |
-| Floating Point Property Atom Element (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Integer Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | fixture-verified (NIST 10.5: 17 atoms) |
+| Floating Point Property Atom Element (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | fixture-verified (NIST 10.5: 13 atoms) |
 | JT Object Reference Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified; base type 6 (Table 7) |
-| Date Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified |
-| Late Loaded Property Atom Element (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified (12 shape references) |
+| Date Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified both generations; 10.5 appends an undocumented F32 (delta 26) |
+| Late Loaded Property Atom Element (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified (v9: 12, NIST 10.5: 105 references); 10.5 drops the Reserved I32 (delta 25) |
 | Vector4f Property Atom Element (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | GUID missing from Table A.1 (spec inconsistency, recorded in ObjectTypeIds) |
 | Property Table (p.90) | done | done | LsgDocumentTest, FixtureDiscoveryTest | fixture: 40 element tables, zero leftover bytes |
 | Element Property Table (p.91) | done | done | LsgDocumentTest | |
@@ -106,7 +109,7 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 20 — LSG Segment data collection (p.28) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | figure's 2nd list box garbled in the PDF; fixture confirms property atoms |
 | Fig. 21 — Base Node Element data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 22 — Base Node Data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | fixture-verified (all 66 graph elements) |
-| Fig. 23 — Partition Node Element data collection (p.31) | done | done | LsgNodeElementCodecTest.partitionNodeElement | fixture-verified incl. flag-bit-0 conditional box |
+| Fig. 23 — Partition Node Element data collection (p.31) | done | done | LsgNodeElementCodecTest.partitionNodeElement, Lsg105GenerationTest.partitionBitZeroWithoutStoredBoxDecodes | fixture-verified incl. flag-bit-0 conditional box; 10.5: inserted version byte, bit 0 set without the box (delta 23) |
 | Fig. 24 — Vertex Count Range data collection (p.32) | done | done | LsgNodeElementCodecTest.partitionNodeElement | |
 | Fig. 25 — Group Node Element data collection (p.33) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
 | Fig. 26 — Group Node Data collection (p.34) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
@@ -122,14 +125,14 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 36 — Base Shape Data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | fixture-verified via tri-strip nodes; v9 delta 8 |
 | Fig. 38 — Vertex Shape Node Element data collection (p.42) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 39 — Vertex Shape Data collection (p.43) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement, .triStripSetShapeNodeElement | fixture-verified by consumption; v9 delta 9 and its evidence limit |
-| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | done | done | LsgNodeElementCodecTest.polylineSetShapeNodeElement | spec-derived, not yet fixture-verified |
+| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | done | done | LsgNodeElementCodecTest.polylineSetShapeNodeElement | fixture-verified (NIST 10.5: 15 nodes) |
 | Fig. 41 — Point Set Shape Node Element data collection (p.45) | done | done | LsgNodeElementCodecTest.pointSetShapeNodeElement | spec-derived; the version==1 conditional binding treated as v10-only |
 | Fig. 42 — Polygon Set Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.polygonSetShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 43 — NULL Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.nullShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 44 — Primitive Set Shape Node Element data collection (p.47) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 45 — Primitive Set Quantization Parameters data collection (p.48) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
-| Fig. 46 — Base Attribute Data collection (p.49) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9 | v9 delta 10: no field-final flags, fixture-verified |
-| Fig. 47 — Material Attribute Element data collection (p.51) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9 | fixture-verified; v9 delta 11 |
+| Fig. 46 — Base Attribute Data collection (p.49) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest | v9 delta 10: no field-final flags, fixture-verified; 10.5: attribute elements gain a trailing I32 (delta 24, NIST: 88 elements) |
+| Fig. 47 — Material Attribute Element data collection (p.51) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest.materialAttributeCarriesTheTrailingField | fixture-verified all three generations (NIST 10.5: 37 elements); v9 delta 11, 10.5 delta 24 |
 | Fig. 48 — Texture Image Attribute Element data collection (p.54) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 49 — Texture Vers-1 Data collection (p.55) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal, .textureImageAttributeElementInline | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 50 — Texture Environment data collection (p.58) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
@@ -143,9 +146,9 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 58 — Point Light Attribute Element data collection (p.71) | done | done | LsgAttributeElementCodecTest.pointLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 59 — Spread Angle value with respect to the light cone (p.72) | n/a | n/a | | illustrative drawing, no byte layout |
 | Fig. 60 — Attenuation Coefficients data collection (p.73) | done | done | LsgAttributeElementCodecTest.pointLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
-| Fig. 61 — Linestyle Attribute Element data collection (p.74) | done | done | LsgAttributeElementCodecTest.linestyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
+| Fig. 61 — Linestyle Attribute Element data collection (p.74) | done | done | LsgAttributeElementCodecTest.linestyleAttributeElement, Lsg105GenerationTest.linestyleCarriesTheTrailingField | v10.5 fixture-verified (NIST: 15 elements, delta 24); v9 layout not established |
 | Fig. 62 — Pointstyle Attribute Element data collection (p.75) | done | done | LsgAttributeElementCodecTest.pointstyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
-| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | done | done | LsgAttributeElementCodecTest.geometricTransformAttributeElement | sparse mask-driven storage, full matrix in the model |
+| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | done | done | LsgAttributeElementCodecTest.geometricTransformAttributeElement, Lsg105GenerationTest.geometricTransformCarriesTheTrailingField | sparse mask-driven storage, full matrix in the model; v10.5 fixture-verified (NIST: 36 elements, delta 24) |
 | Fig. 64 — Texture Coordinate Generator Attribute Element data collection (p.78) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | nested mapping-surface element; alien surface stays lossless (LsgDocumentTest) |
 | Fig. 65 — Mapping Plane Element data collection (p.79) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 66 — Mapping Cylinder Element data collection (p.80) | done | done | LsgAttributeElementCodecTest.mappingCylinderElement | v10 only; spec-derived, not yet fixture-verified |
@@ -153,14 +156,14 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 68 — Mapping TriPlanar Element data collection (p.82) | done | done | LsgAttributeElementCodecTest.mappingTriPlanarElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 69 — Base Property Atom Element data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | spec-derived, not yet fixture-verified |
 | Fig. 70 — Base Property Atom Data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | fixture-verified (all 41 atoms) |
-| Fig. 71 — String Property Atom Element data collection (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified |
-| Fig. 72 — Integer Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | spec-derived, not yet fixture-verified |
-| Fig. 73 — Floating Point Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | spec-derived, not yet fixture-verified |
+| Fig. 71 — String Property Atom Element data collection (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (v9: 28, NIST 10.5: 796) |
+| Fig. 72 — Integer Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | fixture-verified (NIST 10.5) |
+| Fig. 73 — Floating Point Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | fixture-verified (NIST 10.5) |
 | Fig. 74 — JT Object Reference Property Atom Element data collection (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified |
-| Fig. 75 — Date Property Atom Element data collection (p.87) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified |
-| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified |
+| Fig. 75 — Date Property Atom Element data collection (p.87) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified; 10.5 delta 26 (trailing F32, NIST: −4.0 ≙ the timestamps' UTC offset) |
+| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified; 10.5 drops the "always ≥ 1" Reserved I32 (delta 25) |
 | Fig. 77 — Vector4f Property Atom Element data collection (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | spec-derived, not yet fixture-verified |
-| Fig. 78 — Property Table data collection (p.90) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified; also identifies the shape segments' 6-byte tail (DESIGN.md) |
+| Fig. 78 — Property Table data collection (p.90) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified (v9: 40 tables, NIST 10.5: 135); also identifies the shape segments' 6-byte tail (DESIGN.md) |
 | Fig. 79 — Element Property Table data collection (p.91) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified |
 
 
@@ -168,32 +171,35 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 
 All §7 rows below share one version caveat (issue #4, DESIGN.md): the **JT 9 generation's**
 wire layouts are implemented and fixture-verified (12 real tri-strip bodies: exact byte
-consumption, all stored Annex-C hashes verified); the **v10 wire layouts are hidden behind
-segment-wide LZMA in every available v10 file** and are deliberately not guessed — v10 shape
-bodies are carried opaquely with `ELEMENT_LAYOUT_UNVERIFIED` until the LZMA package makes
-them verifiable. `partial` below means exactly that split. Write = byte-identical
-re-serialization of the typed model (authoring writer is milestone 2).
+consumption, all stored Annex-C hashes verified); the v10 wire layouts are deliberately not
+guessed — v10 shape bodies are carried opaquely with `ELEMENT_LAYOUT_UNVERIFIED` until the
+v10 shape-body package establishes them. (The §7 package's original rationale — "hidden
+behind segment-wide LZMA in every available v10 file" — was wrong: shape LOD segments are
+never segment-wide compressed; the LZMA package corrected the record, DESIGN.md. The NIST
+v10 bodies are plain bytes and now also cross-checkable against their decoded LSG.)
+`partial` below means exactly that split. Write = byte-identical re-serialization of the
+typed model (authoring writer is milestone 2).
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Shape LOD Segment (p.92) | partial | partial | ShapeLodDocumentTest, FixtureDiscoveryTest | v9 done: 12 fixture bodies typed + byte-identical round-trip; v10 opaque-with-note pending LZMA |
+| Shape LOD Segment (p.92) | partial | partial | ShapeLodDocumentTest, FixtureDiscoveryTest | v9 done: 12 fixture bodies typed + byte-identical round-trip; v10 opaque-with-note pending the v10 shape-body package |
 | Shape LOD Element (p.92) | partial | partial | ShapeLodDocumentTest | element framing + strict-or-opaque dispatch, both generations |
-| Tri-Strip Set Shape LOD Element (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 fixture-verified incl. decoded triangles/normals; v10 pending LZMA |
+| Tri-Strip Set Shape LOD Element (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 fixture-verified incl. decoded triangles/normals; v10 pending the v10 shape-body package |
 | Polyline Set Shape LOD Element (p.93) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | body layouts (TopoMesh Compressed Rep Data V1/V2) unestablished — no fixture carries one; named note |
 | Point Set Shape LOD Element (p.93) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | as above |
 | Polygon Set LOD Element (p.94) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | as above |
-| Null Shape LOD Element (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | v9 layout spec-derived (9.5 reference), not yet fixture-verified; v10 pending LZMA |
+| Null Shape LOD Element (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | v9 layout spec-derived (9.5 reference), not yet fixture-verified; v10 pending the v10 shape-body package |
 | Primitive Set Shape Element (p.107) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | no fixture carries one; named note |
 | Lossless Compressed Primitive Set Data (p.109) | opaque | opaque |  | inside the opaque Primitive Set body |
 | Lossy Quantized Primitive Set Data (p.111) | opaque | opaque |  | inside the opaque Primitive Set body |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 wire layout fixture-verified (DESIGN.md delta 14, incl. the reserved 12-byte tail); v10 pending LZMA |
+| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 wire layout fixture-verified (DESIGN.md delta 14, incl. the reserved 12-byte tail); v10 pending the v10 shape-body package |
 | Fig. 82 — Polyline Set Shape LOD Element data collection (p.93) | opaque | opaque |  | see section row |
 | Fig. 83 — Point Set Shape LOD Element data collection (p.94) | opaque | opaque |  | see section row |
 | Fig. 84 — Polygon Set LOD Element data collection (p.94) | opaque | opaque |  | see section row |
-| Fig. 85 — Vertex Shape LOD Data collection (p.95) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version + U64 bindings (Table 48 decoded), fixture-verified; v10 pending LZMA |
+| Fig. 85 — Vertex Shape LOD Data collection (p.95) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version + U64 bindings (Table 48 decoded), fixture-verified; v10 pending the v10 shape-body package |
 | Fig. 86 — Base Shape LOD Data collection (p.97) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version, fixture-verified |
 | Fig. 87 — TopoMesh Compressed LOD Data collection (p.97) | opaque | opaque |  | the polyline/point container — no fixture carries one |
 | Fig. 88 — TopoMesh LOD Data collection (p.98) | partial | partial | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron | v9: I16 version + I32 vertex records object id, fixture-verified |
@@ -300,18 +306,18 @@ re-serialization of the typed model (authoring writer is milestone 2).
 The §12 rows implemented by the shape LOD package (issue #4) are the **JT 9 generation's**
 wire formats (fixture-verified against 12 real bodies, 506 packets, all stored hashes); the
 v10 wire variants (Figures 132–137: restructured probability contexts, Move-to-Front,
-nibbler-based bitlength, packed Deering codes) differ and are deferred to the LZMA package,
-which makes the first v10-encoded shape data readable. `partial` on a row means exactly
-that split; DESIGN.md deltas 15–21 record the differences with byte evidence.
+nibbler-based bitlength, packed Deering codes) differ and are deferred to the v10
+shape-body package. `partial` on a row means exactly that split; DESIGN.md deltas 15–21
+record the differences with byte evidence.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Data Compression and Encoding (p.154) | partial | partial | Int32CdpTest, VertexArrayTest, FixtureDiscoveryTest | chapter row: JT 9 generation done, v10 variants pending LZMA |
+| Data Compression and Encoding (p.154) | partial | partial | Int32CdpTest, VertexArrayTest, FixtureDiscoveryTest | chapter row: JT 9 generation done, v10 variants pending the v10 shape-body package |
 | Common Compression Data Collection Formats (p.155) | partial | partial | Int32CdpTest, VertexArrayTest | as above |
-| Int32 Compressed Data Packet (p.155) | partial | partial | Int32CdpTest | JT 9 "Mk. 2" packet done incl. chopper + out-of-band nesting (DESIGN.md delta 15); v10 Figure 132 layout pending LZMA |
+| Int32 Compressed Data Packet (p.155) | partial | partial | Int32CdpTest | JT 9 "Mk. 2" packet done incl. chopper + out-of-band nesting (DESIGN.md delta 15); v10 Figure 132 layout pending the v10 shape-body package |
 | Int64 Compressed Data Packet (p.161) | — | — |  | no §7 structure needs it; first consumer is the B-rep/curve data (§12.1.13+) |
-| Compressed Vertex Coordinate Array (p.164) | partial | partial | VertexArrayTest (lossless + quantized + hash refusal), FixtureDiscoveryTest | JT 9 layout done (exp/mant pairs — delta 19), stored hash verified at decode; v10 pending LZMA |
-| Compressed Vertex Normal Array (p.165) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout done (sextant/octant/theta/psi packets — delta 19); v10 packed codes pending LZMA |
+| Compressed Vertex Coordinate Array (p.164) | partial | partial | VertexArrayTest (lossless + quantized + hash refusal), FixtureDiscoveryTest | JT 9 layout done (exp/mant pairs — delta 19), stored hash verified at decode; v10 pending the v10 shape-body package |
+| Compressed Vertex Normal Array (p.165) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout done (sextant/octant/theta/psi packets — delta 19); v10 packed codes pending the v10 shape-body package |
 | Compressed Vertex Texture Coordinate Array (p.167) | — | — |  | no fixture declares texture bindings; typed decode refuses with a named note until one does |
 | Compressed Vertex Colour Array (p.168) | — | — |  | as above (colour bindings) |
 | Compressed Vertex Flag Array (p.170) | — | — |  | as above (vertex flag binding) |
@@ -324,24 +330,24 @@ that split; DESIGN.md deltas 15–21 record the differences with byte evidence.
 | Compressed Control Point Weights Data (p.180) | — | — |  | as above |
 | Compressed Curve Data (p.181) | — | — |  | as above |
 | Compressed CAD Tag Data (p.185) | — | — |  | as above |
-| Encoding Algorithms (p.186) | partial | n/a: writer emits the simple encodings | Int32CdpTest, VertexArrayTest | decode side: JT 9 generation done; v10 variants pending LZMA |
+| Encoding Algorithms (p.186) | partial | n/a: writer emits the simple encodings | Int32CdpTest, VertexArrayTest | decode side: JT 9 generation done; v10 variants pending the v10 shape-body package |
 | Uniform Data Quantization (p.186) | done | n/a: writer emits lossless data | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes | inverse implemented; reconstruction convention spec-derived — the fixture stores coordinates losslessly (DESIGN.md) |
-| Bitlength CODEC (p.186) | partial | n/a: writer emits the null CODEC | Int32CdpTest.bitlengthFixedWidthDecodes, .bitlengthVariableWidthDecodes | JT 9 wire format fixture-established (DESIGN.md delta 17 — **neither spec's prose matches the wire**); v10 nibbler variant pending LZMA |
-| Arithmetic CODEC (p.188) | partial | n/a: writer emits the null CODEC | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, FixtureDiscoveryTest | implemented because the fixture demands it (codec 3 in real bodies); JT 9 contexts done, v10 Figure 133 pending LZMA |
-| Deering Normal CODEC (p.193) | partial | n/a: writer emits lossless normals | VertexArrayTest.deeringCodeConversionMatchesTheReference, FixtureDiscoveryTest | implemented because the fixture demands it (8-bit codes in all 12 bodies, hashes verified); v10 packed-code form pending LZMA |
-| LZMA compression (p.195) | — | n/a: writer emits ZLIB or none | | named refusal UNSUPPORTED_COMPRESSION in place; decoding needed once a real v10 file arrives (deferral table in DESIGN.md) |
+| Bitlength CODEC (p.186) | partial | n/a: writer emits the null CODEC | Int32CdpTest.bitlengthFixedWidthDecodes, .bitlengthVariableWidthDecodes | JT 9 wire format fixture-established (DESIGN.md delta 17 — **neither spec's prose matches the wire**); v10 nibbler variant pending the v10 shape-body package |
+| Arithmetic CODEC (p.188) | partial | n/a: writer emits the null CODEC | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, FixtureDiscoveryTest | implemented because the fixture demands it (codec 3 in real bodies); JT 9 contexts done, v10 Figure 133 pending the v10 shape-body package |
+| Deering Normal CODEC (p.193) | partial | n/a: writer emits lossless normals | VertexArrayTest.deeringCodeConversionMatchesTheReference, FixtureDiscoveryTest | implemented because the fixture demands it (8-bit codes in all 12 bodies, hashes verified); v10 packed-code form pending the v10 shape-body package |
+| LZMA compression (p.195) | done | n/a: writer emits ZLIB or none (issue #1 codec policy) | LzmaTest, SyntheticFileRoundTripTest.v10RoundTripWithLzmaDecoding, FixtureDiscoveryTest | pure-Kotlin `.xz`/LZMA2 decoder in commonMain — the wire container §12.2.5 names via XZ Utils, byte-verified on all 59 NIST streams (DESIGN.md); corrupt streams → COMPRESSED_DATA_CORRUPT, unimplemented xz features → UNSUPPORTED_COMPRESSION |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Fig. 131 — PMI Model View Sort Orders data collection (p.154) | — | — |  |  |
-| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | partial | partial | Int32CdpTest (all codec paths + hostile inputs) | JT 9 "Mk. 2" wire format (delta 15); v10 layout differs — pending LZMA |
-| Fig. 133 — Int32 Probability Context (p.159) | partial | partial | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand | JT 9 table (delta 16: symbol field, escape −2); v10 restructured it — pending LZMA |
+| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | partial | partial | Int32CdpTest (all codec paths + hostile inputs) | JT 9 "Mk. 2" wire format (delta 15); v10 layout differs — pending the v10 shape-body package |
+| Fig. 133 — Int32 Probability Context (p.159) | partial | partial | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand | JT 9 table (delta 16: symbol field, escape −2); v10 restructured it — pending the v10 shape-body package |
 | Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | partial | partial | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand | as Fig. 133 |
 | Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | — | — |  | first consumer is B-rep/curve data |
 | Fig. 136 — Int64 Probability Context data collection (p.163) | — | — |  | as above |
 | Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | — | — |  | as above |
-| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | partial | partial | VertexArrayTest (lossless, quantized, hash refusal), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending LZMA |
-| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending LZMA |
+| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | partial | partial | VertexArrayTest (lossless, quantized, hash refusal), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending the v10 shape-body package |
+| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | partial | partial | VertexArrayTest.quantizedNormalArrayDecodesDeeringCodes, FixtureDiscoveryTest | JT 9 layout (delta 19); v10 pending the v10 shape-body package |
 | Fig. 140 — Compressed Vertex Texture Coordinate Array data collection (p.167) | — | — |  | no fixture declares the binding; refuses with note |
 | Fig. 141 — Compressed Vertex Colour Array data collection (p.169) | — | — |  | as above |
 | Fig. 142 — Compressed Vertex Flag Array data collection (p.170) | — | — |  | as above |
@@ -406,7 +412,7 @@ that split; DESIGN.md deltas 15–21 record the differences with byte evidence.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Sample bit-length / arithmetic decoder source (p.215) | partial | n/a: reference source, decode side only | Int32CdpTest, VertexArrayTest.deeringCodeConversionMatchesTheReference | arithmetic decoder, predictor unpacking and Deering conversion implemented per the reference (JT 9 generation); the annex's nibbler bitlength is the v10 variant — pending LZMA (the JT 9 bitlength wire differs, DESIGN.md delta 17) |
+| Sample bit-length / arithmetic decoder source (p.215) | partial | n/a: reference source, decode side only | Int32CdpTest, VertexArrayTest.deeringCodeConversionMatchesTheReference | arithmetic decoder, predictor unpacking and Deering conversion implemented per the reference (JT 9 generation); the annex's nibbler bitlength is the v10 variant — pending the v10 shape-body package (the JT 9 bitlength wire differs, DESIGN.md delta 17) |
 
 
 ## Annex C — Hashing: An Implementation

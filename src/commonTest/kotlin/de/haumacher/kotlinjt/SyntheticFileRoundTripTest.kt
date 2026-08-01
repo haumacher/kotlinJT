@@ -87,11 +87,12 @@ class SyntheticFileRoundTripTest {
     }
 
     @Test
-    fun v10RoundTripWithLzmaNote() {
+    fun v10RoundTripWithCorruptLzmaNote() {
         val order = Endianness.LITTLE_ENDIAN
         val lsgId = testGuid(0x35, 0x23, 0x48, 0xE1)
-        // A v10-style LSG segment flagged LZMA (flag 3, algorithm 3): decoding must refuse
-        // with the named note, keep the raw bytes, and still round-trip byte-identically.
+        // A v10-style LSG segment flagged LZMA (flag 3, algorithm 3) whose body is not an
+        // xz stream: decoding must refuse with the named note, keep the raw bytes, and
+        // still round-trip byte-identically.
         val lzmaPayload = compressionWrapper(order, flag = 3u, algorithm = 3, body = ByteArray(50) { it.toByte() })
         val bytes =
             TestFileAssembler(order, JtVersion(10, 0), lsgId)
@@ -100,11 +101,37 @@ class SyntheticFileRoundTripTest {
                 .build()
 
         val file = JtFile.parse(bytes)
-        assertEquals(listOf("UNSUPPORTED_COMPRESSION"), file.notes.map { it.name })
+        assertEquals(listOf("COMPRESSED_DATA_CORRUPT"), file.notes.map { it.name })
         val lsg = file.segments[1]
         assertEquals(3, assertNotNull(lsg.compression).algorithmCode)
-        assertNull(lsg.elementData, "no decoded view for an unsupported codec")
+        assertNull(lsg.elementData, "no decoded view for a refused codec")
         assertEquals(59, lsg.payload.size)
+        assertContentEquals(bytes, file.serialize())
+    }
+
+    // spec: §12.2.5 — segment-wide LZMA (the .xz container) on the decodeCompressible path
+    @Test
+    fun v10RoundTripWithLzmaDecoding() {
+        val order = Endianness.LITTLE_ENDIAN
+        val lsgId = testGuid(0x36, 0x23, 0x48, 0xE1)
+        // liblzma-written .xz of a minimal element stream (one end-of-elements frame):
+        // an LSG segment compressed the way the real 10.5 producer compresses it.
+        val plain = byteArrayOf(0x10, 0, 0, 0) + ByteArray(16) { 0xFF.toByte() }
+        val xz =
+            (
+                "fd377a585a000004e6d6b4460200210116000000742fe5a3e0001300095d00080033605a0afd4000000000" +
+                    "0068392c2a2230e78400012514b1b1afd21fb6f37d010000000004595a"
+            ).let { hex -> ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() } }
+        val bytes =
+            TestFileAssembler(order, JtVersion(10, 5), lsgId)
+                .addSegment(lsgId, 1, compressionWrapper(order, flag = 3u, algorithm = 3, body = xz))
+                .build()
+
+        val file = JtFile.parse(bytes)
+        assertEquals(emptyList(), file.notes, "a decodable LZMA segment loads silently")
+        val lsg = file.segments[0]
+        assertEquals(3, assertNotNull(lsg.compression).algorithmCode)
+        assertContentEquals(plain, assertNotNull(lsg.elementData).toByteArray())
         assertContentEquals(bytes, file.serialize())
     }
 

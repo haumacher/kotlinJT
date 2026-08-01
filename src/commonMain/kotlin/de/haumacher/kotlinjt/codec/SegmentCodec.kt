@@ -63,8 +63,10 @@ object ZlibCodec : SegmentCodec {
 
 /**
  * Algorithm code 3: LZMA, the segment-wide compression of JT 10 files (clause 12.2.5).
- * A named future extension — its time comes with the first v10 fixture that uses it.
- * Until then decoding refuses loudly and the raw bytes stay accessible.
+ * On the wire this is the `.xz` container with an LZMA2 filter — clause 12.2.5 specifies
+ * LZMA via XZ Utils' `.xz` entry points, and every real v10 stream observed carries the
+ * `.xz` magic (byte evidence in DESIGN.md). Decode-only: the writer keeps emitting
+ * ZLIB/none per the issue #1 version/codec policy.
  */
 object LzmaCodec : SegmentCodec {
     override val algorithmCode: Int get() = 3
@@ -73,7 +75,18 @@ object LzmaCodec : SegmentCodec {
     override fun decode(
         segmentId: Guid,
         body: Bytes,
-    ): CodecResult = CodecResult.Refused(LoadNote.UnsupportedCompression(segmentId, algorithmCode, "LZMA"))
+    ): CodecResult =
+        try {
+            CodecResult.Decoded(Bytes.of(xzDecompress(body.toByteArray())))
+        } catch (e: XzException) {
+            CodecResult.Refused(
+                if (e.unsupported) {
+                    LoadNote.UnsupportedCompression(segmentId, algorithmCode, "LZMA (${e.message})")
+                } else {
+                    LoadNote.CompressedDataCorrupt(segmentId, e.message ?: "xz/lzma error")
+                },
+            )
+        }
 }
 
 /** The codec registry keyed by the U8 Compression Algorithm field. */
