@@ -1,6 +1,7 @@
 package de.haumacher.kotlinjt.meta
 
 import de.haumacher.kotlinjt.JtFormatException
+import de.haumacher.kotlinjt.encoding.CompressedCadTagData
 import de.haumacher.kotlinjt.io.ByteReader
 import de.haumacher.kotlinjt.io.ByteWriter
 import de.haumacher.kotlinjt.io.toBytes
@@ -671,30 +672,17 @@ private fun writePmiPolygonData(
  * the collection — established on the NIST bodies, where it lands exactly on the next field
  * in all 14.
  */
-private fun readCompressedCadTagData(r: ByteReader): CompressedCadTagData {
-    val version = r.readU8().toInt()
-    val dataLength = r.readI32()
-    if (dataLength < 8 || dataLength - 4 > r.remaining) {
-        throw JtFormatException("Compressed CAD Tag Data Length $dataLength does not fit the remaining ${r.remaining} bytes")
-    }
-    val innerVersion = r.readI32()
-    return CompressedCadTagData(version, innerVersion, r.readBytes(dataLength - 8).toBytes())
-}
-
 private fun writeCompressedCadTagData(
     w: ByteWriter,
     data: CompressedCadTagData,
-) {
-    w.writeU8(data.version.toUByte())
-    w.writeI32(8 + data.codedData.size)
-    w.writeI32(data.innerVersion)
-    w.writeBytes(data.codedData)
-}
+) = data.encode(w)
 
 // spec: Figure 129
 private fun readPmiCadTagData(
     r: ByteReader,
     expectedIndexCount: Int,
+    externallyCompressed: Boolean,
+    onCadTagsOpaque: (String) -> Unit,
 ): PmiCadTagData {
     val count = r.readCount("CAD Tag Index", 4)
     if (count != expectedIndexCount) {
@@ -703,7 +691,13 @@ private fun readPmiCadTagData(
         )
     }
     val indices = List(count) { r.readI32() }
-    return PmiCadTagData(indices, readCompressedCadTagData(r))
+    // The tag count is deliberately *not* constrained here. §11.2.7's formula governs the CAD
+    // Tag *Index* Count (validated above); the number of tags in the collection is a different
+    // number — NX 10.5 writes more tags than indices in ten of the NIST fixture's fourteen PMI
+    // managers (twice as many in most of them), which matches §12.1.16's own statement that
+    // "exactly what CAD entity types have CAD Tags ... is defined by users of this data
+    // collection". Constraining it would refuse bodies that are perfectly well-formed.
+    return PmiCadTagData(indices, CompressedCadTagData.read(r, null, externallyCompressed, onCadTagsOpaque))
 }
 
 private fun writePmiCadTagData(
@@ -744,7 +738,9 @@ internal class UndocumentedTail(
 internal fun readPmiManagerMetaDataElement(
     r: ByteReader,
     generation: LsgGeneration,
+    externallyCompressed: Boolean,
     onUndocumentedTail: (UndocumentedTail) -> Unit,
+    onCadTagsOpaque: (String) -> Unit,
 ): PmiManagerMetaDataElement {
     val objectId = r.readMetaElementHeader()
     val version = r.readU8().toInt()
@@ -780,7 +776,12 @@ internal fun readPmiManagerMetaDataElement(
     // The §11.2.7 formula: one CAD Tag index per entity of every PMI kind that supports them.
     // In the v10 wire only design groups, model views and generic entities exist.
     val expectedIndexCount = designGroups.size + modelViews.size + genericEntities.size
-    val cadTagData = if (cadTagsFlag == 1) readPmiCadTagData(r, expectedIndexCount) else null
+    val cadTagData =
+        if (cadTagsFlag == 1) {
+            readPmiCadTagData(r, expectedIndexCount, externallyCompressed, onCadTagsOpaque)
+        } else {
+            null
+        }
     val fonts = readPmiFonts(r)
     val tail = r.readBytes(r.remaining).toBytes()
     if (tail.size > 0) onUndocumentedTail(UndocumentedTail(tail.size))

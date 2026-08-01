@@ -66,7 +66,7 @@ are tracked at section granularity with behavioral tests.
 | File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
-| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere (incl. the 59 LZMA-inflated NIST streams); LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded in both generations (§7 — JT 9 via issue #4, v10 via issue #6); meta data / PMI element bodies decoded (§11, issue #9 — 44 NIST segments, both element types); B-rep, wireframe and LWPA bodies remain undecoded |
+| Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest, WireframeDocumentTest, LwpaDocumentTest, BrepOpacityTest, UndefinedSegmentTypeTest | framing scanned everywhere; LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded in both generations (§7 — JT 9 via issue #4, v10 via issue #6); meta data / PMI bodies decoded (§11, issue #9); wireframe bodies decoded and LWPA spec-derived (§10/§9, issue #10). **Every remaining segment family now has an honest final fate**: B-rep is `opaque` by doctrine with a proof (BrepOpacityTest), and the segment types Table 6 does not define (NX 10.5 writes 23 and 31) are named, decompressed, element-framed and preserved verbatim (UndefinedSegmentTypeTest). `partial` remains only because the *undefined* types' element bodies are deliberately not interpreted |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -224,43 +224,82 @@ of one closed component per triangle (§7.1.4.1.3.1's cover-face mechanism — D
 
 ## §8 Precise Geometry Segment
 
+**`opaque` here is a doctrine, not a gap** — issue #1's third design rule: *"B-rep (JT B-rep / XT)
+is preserved opaquely, never interpreted. Parasolid's representation is its own world; this
+library's honesty is the tessellation, the structure tree, the properties and the PMI."* Since
+issue #10 that is a *proven* property rather than a claim: `BrepOpacityTest` enumerates every
+precise-geometry segment of every fixture, records its element type GUID, and asserts that the
+payload survives parse → whole-file re-encode byte-identically — 9 segments and 583 617 payload
+bytes on the NIST 10.5 file, 8 of them carrying a Parasolid `TRANSMIT FILE` container. Opaque
+means *carried*, never skipped; the rows below say `opaque`, never `n/a`.
+
+The Write column is `n/a` throughout: `writeJt` authors no precise geometry (a file without it is
+legal). Re-serialization of a *read* file is byte-faithful at Layer 0 and covered by the same test.
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Precise Geometry Segment (p.115) | — | — |  |  |
-| JT B-Rep Element (deprecated) (p.115) | — | — |  |  |
-| XT B-Rep Element (p.115) | — | — |  |  |
-| JT ULP Segment (p.115) | — | — |  |  |
+| Precise Geometry Segment (p.115) | opaque | n/a: `writeJt` authors no precise geometry | BrepOpacityTest, FixtureDiscoveryTest | chapter row. Every §8 segment kind is enumerated, decompressed, element-framed and preserved verbatim; none is interpreted. Its time comes only if issue #1 rule 3 is reversed — which would be a doctrine change, not a package |
+| JT B-Rep Element (deprecated) (p.115) | opaque | n/a: deprecated, "read only for application creation" (§8.1) | BrepOpacityTest (kind covered, skips visibly) | no fixture carries one (Table 6 type 2). Annex E documents it; the doctrine keeps it opaque regardless |
+| XT B-Rep Element (p.115) | opaque | n/a: `writeJt` authors no precise geometry | BrepOpacityTest | fixture-exercised: 8 NIST segments, all one `XT B-Rep Element` (Annex A GUID) with Object Base Type 9, all ending in the Figure-78 empty property table; 7 of the 8 payloads contain a Parasolid transmit file |
+| MultiXT B-Rep Element (Annex F.1.3) | opaque | n/a: `writeJt` authors no precise geometry | BrepOpacityTest | **row added** (discipline 3: nothing deleted): Table 6 defines segment type 30 and Annex F documents its element, but Annex A lists neither — the GUID is recorded in `ObjectTypeIds.MULTI_XT_BREP_ELEMENT` with that inconsistency noted. One NIST segment, 196 081 payload bytes, referenced by `JT_LLPROP_MULTIXTBREP` |
+| JT ULP Segment (p.115) | opaque | n/a: `writeJt` authors no precise geometry | BrepOpacityTest (kind covered, skips visibly) | no fixture carries one (Table 6 type 20). Annex G documents it; opaque by the same doctrine — the honest fate, not a non-goal |
+| STEP B-Rep Element (Table 6 type 32) | opaque | n/a: `writeJt` authors no precise geometry | BrepOpacityTest (kind covered, skips visibly) | **row added**: Table 6 and Annex A both define type 32, §8 does not describe it. No fixture carries one; opaque by the same doctrine |
 
 
 ## §9 JT LWPA Segment
 
+**No fixture carries a JT LWPA segment**, so every row below is **spec-derived** — decoded rather
+than deferred because Figures 100 and 101 leave nothing to infer: the two `VecI32{Int32CDP}`
+vectors have their length fixed by `Analytic Surface Count`, and the four `VecF64` arrays are plain
+count-plus-values vectors written "in binary form" (no quantizer, no predictor, no hash). The
+element decode is strict and fully consuming, so a producer that contradicts the derivation gets an
+opaque carry with a named note (`LWPA_STRUCTURE_UNRECOGNIZED` / `ELEMENT_DECODE_FAILED`), never a
+misread. The JT 9 generation stays opaque-by-policy: the v9.5 reference lists segment type 24 in its
+Table 3 but documents no LWPA *element* at all.
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| JT LWPA Segment (p.115) | — | — |  |  |
-| JT LWPA Element (p.116) | — | — |  |  |
-| Analytic Surface Geometry (p.117) | — | — |  |  |
+| JT LWPA Segment (p.115) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest | element list + the Figure-78 trailer, same seam as §7/§10/§11; spec-derived, no fixture |
+| JT LWPA Element (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .lwpaElementWithoutAnalyticSurfacesStopsAfterTheCounts | spec-derived; V9 opaque-with-note (no v9 element documented) |
+| Analytic Surface Geometry (p.117) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .aSurfaceTypeOutsideTableOneHundredRefuses | spec-derived; surface types validated against Table 100 (0..5; 6/7 reserved) |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 99 — JT LWPA Segment data collection (p.116) | — | — |  |  |
-| Fig. 100 — JT LWPA Element data collection (p.116) | — | — |  |  |
-| Fig. 101 — Analytic Surface Geometry data collection (p.117) | — | — |  |  |
-| Fig. 102 — Analytic Surface Creation (p.119) | — | — |  |  |
+| Fig. 99 — JT LWPA Segment data collection (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest | spec-derived |
+| Fig. 100 — JT LWPA Element data collection (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .moreAnalyticSurfacesThanSurfacesRefuses | spec-derived; the `Analytic Surface Count > 0` conditional is pinned both ways |
+| Fig. 101 — Analytic Surface Geometry data collection (p.117) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .anIndexVectorContradictingTheAnalyticCountRefuses | spec-derived; `VecF64` = plain count + values (§4.2 Symbols table) |
+| Fig. 102 — Analytic Surface Creation (p.119) | n/a | n/a | | flow chart, not a byte layout: it says how many numbers each surface type *consumes* from the four arrays. Building that projection is a recorded deferral — its time comes with a consumer that needs analytic surfaces (DESIGN.md) |
 
 
 ## §10 Wireframe Segment
 
+Read-side complete for the **v10 generation**, fixture-verified against the five Wireframe segments
+of the NIST 10.5 file: 197 edges over 197 NURBS curves with 197 CAD tags, all decoding typed with
+**zero notes** and byte-identical element-stream round-trip. Every count the wire declares is
+cross-validated at decode (edge count vs. both index vectors, three coordinates per control point,
+weight count vs. the rational curves' control point sum, and the knot vector length against
+Table 68's own formula) — which is what makes the layout established rather than plausible. Deltas
+37 and 40 in DESIGN.md record where the bytes correct or complete the 10.0 text.
+
+The **JT 9 generation is opaque-by-policy** (`ELEMENT_LAYOUT_UNVERIFIED`): the v9.5 reference's
+Figure 130 is a different wire format (I16 version, Lag1-predicted index vectors, JT 9 "Mk. 2" CDPs
+throughout the curve data) and no v9 fixture carries a Wireframe segment. The **Write column is
+`n/a` throughout**: `writeJt` authors no wireframe segments (a file without them is legal, and the
+Layer 2 scene has no NURBS concept). Re-serialization of a read document *is* byte-identical.
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Wireframe Segment (p.120) | — | — |  |  |
-| Wireframe Rep Element (p.120) | — | — |  |  |
-| Wireframe MCS Curves Geometric Data (p.122) | — | — |  |  |
-| Wireframe Rep CAD Tag Data (p.122) | — | — |  |  |
+| Wireframe Segment (p.120) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest, WireframeFixtureTest | element list + the Figure-78 trailer (empty in all five fixture segments); unterminated streams and unknown element types produce named notes and keep their bytes |
+| Wireframe Rep Element (p.120) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | v10 fixture-verified (5 bodies); v9 opaque-with-note. Version Number is U8, not Figure 104's `I16` (delta 40) |
+| Wireframe MCS Curves Geometric Data (p.122) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | one Compressed Curve Data collection (Fig. 150); "currently only NURBS Curve types are supported", enforced against Table 69 |
+| Wireframe Rep CAD Tag Data (p.122) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.sixtyFourBitCadTagsDecodeFromTheInt64Vector, .undecodableCadTagVectorsAreKeptVerbatimWithANote, WireframeFixtureTest | one Compressed CAD Tag Data collection (Fig. 154), decoded; §10.1.2's "one CAD tag per Edge" validated on all five bodies |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 104 — Wireframe Rep Element data collection (p.121) | — | — |  |  |
-| Fig. 105 — Wireframe MCS Curves Geometric Data collection (p.122) | — | — |  |  |
+| Fig. 103 — Wireframe Segment data collection (p.120) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.anUnterminatedElementListKeepsItsRemainderVerbatim, WireframeFixtureTest | **row added** (discipline 3): the mechanical TOC extraction missed it — the reference prints "Figure 103 —Wireframe" without the space after the em dash |
+| Fig. 104 — Wireframe Rep Element data collection (p.121) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, .emptyWireframeRepElementSkipsBothConditionalBlocks, .withoutCadTagsFlagNoTagCollectionIsRead, WireframeFixtureTest | fixture-verified incl. both conditional blocks; U8 (not I16) version and NULL (not Lag1) predictors — the latter is Revision B's own correction |
+| Fig. 105 — Wireframe MCS Curves Geometric Data collection (p.122) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | a pass-through to Compressed Curve Data (Fig. 150) |
+| Fig. 106 — Wireframe Rep CAD Tag Data collection (p.123) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest.sixtyFourBitCadTagsDecodeFromTheInt64Vector, WireframeFixtureTest | a pass-through to Compressed CAD Tag Data (Fig. 154). The generator filed a duplicate of this row under §11 — see the pointer there |
 
 
 ## §11 Meta Data Segment
@@ -297,14 +336,14 @@ assertions prove; the authoring deferral and its condition are in DESIGN.md's ta
 | PMI String Table (p.133) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; every String ID of every sub-collection is validated against it at decode |
 | PMI Model Views (p.134) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (89 model views, each with its own PMI Property list) |
 | Generic PMI Entities (p.139) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified (403 entities: dimensions, notes, sections, reference geometry, part transforms — including populated 2D frames, text entities and non-text polylines) |
-| PMI CAD Tag Data (p.149) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | the index list is fixture-verified and its count validated against the §11.2.7 formula on all 14 managers; the nested Compressed CAD Tag Data has its framing decoded (delta 34) and its entropy-coded vectors kept verbatim — decoding them needs the Int64 CDP (deferred, see DESIGN.md) |
+| PMI CAD Tag Data (p.149) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | index list fixture-verified and its count validated against the §11.2.7 formula on all 14 managers; the nested Compressed CAD Tag Data is fully decoded since the Int64 CDP landed (issue #10) — all 14 managers' tag vectors decode. The tag *count* is deliberately unconstrained: NX writes more tags than indices in ten of the fourteen (delta 41) |
 | PMI Polygon Data (p.150) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified for the manager's own block and for all five fonts' glyph outlines (one PolygonData element per character); colour/texture bindings never occur in the fixture — their conditional arrays are spec-derived |
 | PMI Properties (p.153) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | the *segment-level* property list sits inside the undocumented tail (delta 33) — the PMI Property collection itself is `done` (Fig. 117/118) via model views and generic entities. Its time comes with a fixture whose Property Count is non-zero |
 | PMI Model View Sort Orders (p.154) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | inside the same undocumented tail; all 14 fixture managers would have to declare a non-zero count to pin its position |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 106 — Wireframe Rep CAD Tag Data collection (p.123) | — | — |  | belongs to §10 (Wireframe), not yet started |
+| Fig. 106 — Wireframe Rep CAD Tag Data collection (p.123) | done | n/a: `writeJt` authors no wireframe | WireframeDocumentTest, WireframeFixtureTest | the generator filed this §10 figure under §11; kept in place (discipline 3) with its fate mirrored from the §10 table, where the row now lives properly |
 | Fig. 107 — Meta Data Segment data collection (p.123) | done | — | MetaDataDocumentTest (structure + hostile paths), MetaDataFixtureTest | element list + the Figure-78 trailer; unterminated streams and unknown element types produce named notes and keep their bytes |
 | Fig. 108 — Property Proxy Meta Data Element data collection (p.124) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType, .duplicateBagKeysArePreservedInOrder, .unknownPropertyValueTypeKeepsTheDecodedPrefixAndTheRawRemainder | fixture-verified in all three generations' shared layout; duplicate keys preserved in wire order |
 | Fig. 109 — Date Property Value data collection (p.125) | done | — | MetaDataDocumentTest.propertyProxyCarriesEveryTable53ValueType | spec-derived (no fixture bag carries a Date) |
@@ -327,7 +366,7 @@ assertions prove; the authoring deferral and its condition are in DESIGN.md's ta
 | Fig. 126 — Text Polyline Data collection (p.146) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | **delta 36**: the coordinate VecF32 is on the wire even when the index count is 0 |
 | Fig. 127 — Constructing Non-Text Polylines from packed 2D data arrays (p.147) | n/a | n/a |  | illustrative drawing of Fig. 128's arrays, no byte layout |
 | Fig. 128 — Non-Text Polyline Data collection (p.148) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified; the 2D-vs-3D packing of the coordinates is left to the consumer (the flat array is the model) |
-| Fig. 129 — PMI CAD Tag Data collection (p.149) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, .aCadTagIndexCountThatContradictsTheEntityCountsRefuses, MetaDataFixtureTest | index list fixture-verified and validated against the §11.2.7 count formula; the nested Compressed CAD Tag Data's coded vectors stay verbatim (Fig. 154 row) |
+| Fig. 129 — PMI CAD Tag Data collection (p.149) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, .aCadTagIndexCountThatContradictsTheEntityCountsRefuses, MetaDataFixtureTest | index list fixture-verified and validated against the §11.2.7 count formula; the nested Compressed CAD Tag Data is decoded (Fig. 154 row) |
 | Fig. 130 — PMI Polygon Data (p.151) | done | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | fixture-verified incl. the parallel binding/dimension vectors and empty elements; colour/texture arrays spec-derived (no fixture binds them) |
 
 
@@ -342,10 +381,10 @@ the NIST bytes contradict or complete the v10 text.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Data Compression and Encoding (p.154) | partial | partial | Int32CdpTest, Int32CdpV10Test, VertexArrayTest, FixtureDiscoveryTest | chapter row: both generations of the §7 codecs done; Int64CDP and the curve/B-rep structures pending their first consumer |
-| Common Compression Data Collection Formats (p.155) | partial | partial | Int32CdpTest, Int32CdpV10Test, VertexArrayTest | as above |
+| Data Compression and Encoding (p.154) | partial | partial | Int32CdpTest, Int32CdpV10Test, Int64CdpTest, VertexArrayTest, FixtureDiscoveryTest | chapter row: both generations of the §7 codecs done; Int64CDP and the NURBS curve / CAD tag collections done since issue #10; the texture/colour/auxiliary vertex arrays wait for a fixture that binds them |
+| Common Compression Data Collection Formats (p.155) | partial | partial | Int32CdpTest, Int32CdpV10Test, Int64CdpTest, VertexArrayTest | as above |
 | Int32 Compressed Data Packet (p.155) | done | done | Int32CdpTest, Int32CdpV10Test, FixtureDiscoveryTest | JT 9 "Mk. 2" packet (delta 15) and the v10 third-generation packet (Figure 132) incl. Move-to-Front (delta 31) and the escape-conditional out-of-band packet (delta 28); v10 chopper-with-0-chop-bits refuses (spec forbids it) |
-| Int64 Compressed Data Packet (p.161) | — | — |  | no §7 structure needs it; first consumer is the B-rep/curve data (§12.1.13+) |
+| Int64 Compressed Data Packet (p.161) | done | done | Int64CdpTest (every codec + hostile inputs), WireframeFixtureTest | landed with §10 (issue #10), its first consumer. Fixture-verified codecs: arithmetic (12 packets, 8 with an escape), bitlength (2), move-to-front (1); null and chopper are spec-derived (Figure 135 fixes them exactly as the fixture-verified Int32 forms). Write = byte-identical re-serialization of the preserved packet |
 | Compressed Vertex Coordinate Array (p.164) | done | done | VertexArrayTest (both generations, lossless + quantized + hash refusals), FixtureDiscoveryTest | JT 9: exp/mant pairs (delta 19); v10: one binary/code packet per component, hashed per component array (delta 29) — stored hashes verified at decode |
 | Compressed Vertex Normal Array (p.165) | done | done | VertexArrayTest (both generations incl. packed Deering + NULL-predictor pin), FixtureDiscoveryTest | JT 9: sextant/octant/theta/psi packets (delta 19); v10: one packed Deering code array, NULL predictor (deltas 29/30) |
 | Compressed Vertex Texture Coordinate Array (p.167) | — | — |  | no fixture declares texture bindings; typed decode refuses with a named note until one does |
@@ -356,10 +395,10 @@ the NIST bytes contradict or complete the v10 text.
 | Texture Quantizer Data (p.175) | — | — |  | with the texture coordinate array |
 | Colour Quantizer Data (p.175) | — | — |  | with the colour array |
 | Uniform Quantizer Data (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations |
-| Compressed Entity List for Non-Trivial Knot Vector (p.177) | — | — |  | B-rep/wireframe curve data — outside §7 |
-| Compressed Control Point Weights Data (p.180) | — | — |  | as above |
-| Compressed Curve Data (p.181) | — | — |  | as above |
-| Compressed CAD Tag Data (p.185) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | reached first by PMI CAD Tag Data (§11, issue #9): the framing is decoded and its Data Length convention established (DESIGN.md delta 34); the entropy-coded tag vectors stay verbatim until the Int64 CDP has a consumer |
+| Compressed Entity List for Non-Trivial Knot Vector (p.177) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, .knotTypeStoredValueCountsFollowTheTableSixtyEightFormula, WireframeFixtureTest | fixture-verified via the wireframe curve data; knot types 0 and 2 occur in the NIST bodies, 1 and 3 are spec-derived. Write = byte-identical re-serialization |
+| Compressed Control Point Weights Data (p.180) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | fixture-verified (204 rational control points across the five bodies); §12.1.14's "unstored weight is 1.0" rule implemented and pinned |
+| Compressed Curve Data (p.181) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, .aCurveBaseTypeOutsideTableSixtyNineRefuses, WireframeFixtureTest | fixture-verified for **MCS (XYZ) curves** (Table 71) on 197 NIST curves; the UV-curve dimensionality of Table 70 is a parameter of the same decoder, spec-derived until a JT B-Rep consumer exists |
+| Compressed CAD Tag Data (p.185) | done | done | WireframeDocumentTest.sixtyFourBitCadTagsDecodeFromTheInt64Vector, .undecodableCadTagVectorsAreKeptVerbatimWithANote, WireframeFixtureTest, MetaDataFixtureTest | fully decoded since issue #10, in both its consumers: 5 wireframe reps (197 type-1 tags) and all 14 PMI managers. Data Length convention per delta 34; both tag vectors are always on the wire, empty-packet where the type does not occur (delta 40). Undecodable vectors fall back to verbatim bytes with `CAD_TAG_VECTORS_UNRECOGNIZED` |
 | Encoding Algorithms (p.186) | done | n/a: writer emits the simple encodings | Int32CdpTest, Int32CdpV10Test, VertexArrayTest | decode side: both generations fixture-verified |
 | Uniform Data Quantization (p.186) | done | n/a: writer emits lossless data | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | inverse implemented; since issue #6 fixture-exercised (the NIST LOD1/2 coordinates are quantized at 9–17 bits and land inside their shape nodes' boxes) |
 | Bitlength CODEC (p.186) | done | n/a: writer emits the null CODEC | Int32CdpTest.bitlengthFixedWidthDecodes, .bitlengthVariableWidthDecodes, Int32CdpV10Test.bitlengthFixedWidthDecodesWithNibbledMinMax, .bitlengthVariableWidthDecodesWithFourBitBlocks | JT 9 wire format fixture-established (delta 17 — **neither spec's prose matches that wire**); v10 nibbler/4-bit-block variant per Annex B, verified on 696 NIST packets |
@@ -370,12 +409,12 @@ the NIST bytes contradict or complete the v10 text.
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Fig. 131 — PMI Model View Sort Orders data collection (p.154) | opaque | — | MetaDataDocumentTest.undocumentedBytesAfterTheFontBlockAreNamedAndPreserved | a §11 figure (the TOC filed it here); it sits inside the PMI Manager's undocumented post-font block — DESIGN.md delta 33 |
-| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | done | done | Int32CdpTest, Int32CdpV10Test (all codec paths + hostile inputs), FixtureDiscoveryTest | JT 9 "Mk. 2" (delta 15) and v10 third-generation wire formats, both fixture-verified; out-of-band packet conditional on the escape entry (delta 28) | **Write: authored by `writeJt`** — the null CODEC (Table 64 value 0) is the packet form the writer emits (WriteJtTest.authoredTopologyIsOneClosedComponentPerTriangle).
+| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | done | done | Int32CdpTest, Int32CdpV10Test (all codec paths, both out-of-band forms, hostile inputs), FixtureDiscoveryTest, WireframeFixtureTest | JT 9 "Mk. 2" (delta 15) and v10 third-generation wire formats, both fixture-verified; out-of-band data conditional on the escape entry (delta 28) and its *form* on the figure's external-compression branch (delta 37) | **Write: authored by `writeJt`** — the null CODEC (Table 64 value 0) is the packet form the writer emits (WriteJtTest.authoredTopologyIsOneClosedComponentPerTriangle).
 | Fig. 133 — Int32 Probability Context (p.159) | done | done | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, Int32CdpV10Test | JT 9 table (delta 16: symbol field, escape −2) and v10 table (escape flag, 7-bit value width) |
 | Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | done | done | Int32CdpV10Test (escape + escapeless vectors) | as Fig. 133 |
-| Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | — | — |  | first consumer is B-rep/curve data |
-| Fig. 136 — Int64 Probability Context data collection (p.163) | — | — |  | as above |
-| Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | — | — |  | as above |
+| Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | done | done | Int64CdpTest (null / bitlength / arithmetic in both out-of-band forms / chopper / move-to-front + refusals), WireframeFixtureTest | §12.1.2's "low-order 32 bits first" rule applied to every 64-bit field; out-of-band form follows the external-compression branch (delta 37) |
+| Fig. 136 — Int64 Probability Context data collection (p.163) | done | done | Int64CdpTest.arithmeticWithEmptyCodeTextTakesEveryValueOutOfBandNested, .aContextWithTwoEscapeEntriesRefuses, WireframeFixtureTest | fixture-verified on 12 packets; U64 min value read low-order word first, associated values stored unsigned relative to it |
+| Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | done | done | Int64CdpTest (escape + escapeless contexts), WireframeFixtureTest | as Fig. 136 |
 | Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | done | done | VertexArrayTest (both generations, hash refusals), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 layout with per-array lossless hashing (delta 29) | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
 | Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | done | done | VertexArrayTest (both generations incl. the NULL-predictor pin), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 packed Deering codes, NULL predictor (delta 30) | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
 | Fig. 140 — Compressed Vertex Texture Coordinate Array data collection (p.167) | — | — |  | no fixture declares the binding; refuses with note |
@@ -386,13 +425,13 @@ the NIST bytes contradict or complete the v10 text.
 | Fig. 145 — Texture Quantizer Data collection (p.175) | — | — |  | with the texture coordinate array |
 | Fig. 146 — Colour Quantizer Data collection (p.176) | — | — |  | with the colour array |
 | Fig. 147 — Uniform Quantizer Data collection (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
-| Fig. 148 — Compressed Entity List for Non-Trivial Knot Vector data collection (p.178) | — | — |  |  |
-| Fig. 149 — Compressed Control Point Weights Data collection (p.180) | — | — |  |  |
-| Fig. 150 — Compressed Curve Data collection (p.182) | — | — |  |  |
-| Fig. 151 — Non-Trivial Knot Vector NURBS Curve Indices data collection (p.184) | — | — |  |  |
-| Fig. 152 — NURBS Curve Control Point Weights data collection (p.184) | — | — |  |  |
-| Fig. 153 — NURBS Curve Control Points data collection (p.184) | — | — |  |  |
-| Fig. 154 — Compressed CAD Tag Data collection (p.185) | partial | — | MetaDataDocumentTest.pmiManagerDecodesEverySubCollectionAndRoundTrips, MetaDataFixtureTest | framing fixture-verified on all 14 PMI managers (delta 34); CAD Tag Types / Type-1 / Type-2 vectors carried verbatim (Int64 CDP deferred) |
+| Fig. 148 — Compressed Entity List for Non-Trivial Knot Vector data collection (p.178) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | four-entry flag vector validated against Table 68; index lists are Lag1-predicted |
+| Fig. 149 — Compressed Control Point Weights Data collection (p.180) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | fixture-verified; weight indices validated as ascending and in range |
+| Fig. 150 — Compressed Curve Data collection (p.182) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, .aCurveBaseTypeOutsideTableSixtyNineRefuses, WireframeFixtureTest | fixture-verified on 197 curves; four independent count cross-checks make the field order exact |
+| Fig. 151 — Non-Trivial Knot Vector NURBS Curve Indices data collection (p.184) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | a pass-through to Fig. 148 |
+| Fig. 152 — NURBS Curve Control Point Weights data collection (p.184) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | a pass-through to Fig. 149 |
+| Fig. 153 — NURBS Curve Control Points data collection (p.184) | done | done | WireframeDocumentTest.wireframeRepElementWithCurvesAndCadTagsDecodes, WireframeFixtureTest | fixture-verified: exactly three F64 coordinates per control point, non-homogeneous (rational curves keep their weights in Fig. 152) |
+| Fig. 154 — Compressed CAD Tag Data collection (p.185) | done | done | WireframeDocumentTest.sixtyFourBitCadTagsDecodeFromTheInt64Vector, .undecodableCadTagVectorsAreKeptVerbatimWithANote, WireframeFixtureTest, MetaDataFixtureTest | framing fixture-verified on all 14 PMI managers (delta 34) and all 5 wireframe reps; the tag vectors decode since the Int64 CDP landed (issue #10). Type-2 (64-bit) tags are spec-derived — no fixture writes one |
 | Fig. 155 — Sextant Coding on the Sphere (p.194) | n/a | n/a |  | illustrative drawing, no byte layout (the coding itself is the Deering CODEC row) |
 
 
@@ -461,7 +500,11 @@ the NIST bytes contradict or complete the v10 text.
 
 ## Annex E — (deprecated) JT B-Rep Segment
 
-*Prefilled:* **opaque by doctrine (issue #1 rule 3): carried losslessly, never interpreted**
+*Prefilled:* **opaque by doctrine (issue #1 rule 3): carried losslessly, never interpreted** —
+and since issue #10 *proven* so: `BrepOpacityTest` enumerates every precise-geometry segment of
+every fixture, names its element type, and asserts the payload survives parse → whole-file re-encode
+byte-identically. No fixture carries a (deprecated) JT B-Rep segment; the doctrine holds regardless
+of that, so these rows would stay `opaque` even with one.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
@@ -474,7 +517,7 @@ the NIST bytes contradict or complete the v10 text.
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 162 — JT B-Rep Element data collection (p.262) | opaque | opaque |  |  |
+| Fig. 162 — JT B-Rep Element data collection (p.262) | opaque | opaque | BrepOpacityTest (kind covered; skips visibly — no fixture) | the element type is named by `ObjectTypeIds.JT_BREP_ELEMENT`; its body is never read |
 | Fig. 163 — Topological Entity Counts data collection (p.263) | opaque | opaque |  |  |
 | Fig. 164 — Geometric Entity Counts data collection (p.264) | opaque | opaque |  |  |
 | Fig. 165 — Topology Data collection (p.265) | opaque | opaque |  |  |
@@ -504,14 +547,19 @@ the NIST bytes contradict or complete the v10 text.
 
 ## Annex F — XT B-Rep data segment
 
-*Prefilled:* **opaque by doctrine (issue #1 rule 3): carried losslessly, never interpreted**
+*Prefilled:* **opaque by doctrine (issue #1 rule 3): carried losslessly, never interpreted** —
+and since issue #10 *proven* so on real bytes: the NIST 10.5 fixture's 8 XT and 1 MultiXT segments
+are enumerated, decompressed, element-framed and preserved verbatim by `BrepOpacityTest`, which also
+finds the Parasolid `TRANSMIT FILE` container inside them. Annex F.1.3's MultiXT element GUID is
+recorded in `ObjectTypeIds` (Annex A omits it) so the element is *named* rather than anonymous —
+naming is not interpreting.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| XT B-Rep Element (p.285) | opaque | opaque |  |  |
+| XT B-Rep Element (p.285) | opaque | opaque | BrepOpacityTest | 8 NIST segments enumerated and preserved; element GUID from Annex A |
 | F.1.1 XT B-Rep Data (p.286) | opaque | opaque |  |  |
 | F.1.2 Integer Attribute Data (p.286) | opaque | opaque |  |  |
-| F.1.3 MultiXT B-Rep Segment (p.287) | opaque | opaque |  |  |
+| F.1.3 MultiXT B-Rep Segment (p.287) | opaque | opaque | BrepOpacityTest | 1 NIST segment; element GUID recorded in `ObjectTypeIds` because Annex A omits segment type 30 entirely |
 | XT B-Rep Data Segment Description (p.289) | opaque | opaque |  |  |
 | F.2.1 Logical Layout (p.289) | opaque | opaque |  |  |
 | F.2.2 Physical Layout (p.293) | opaque | opaque |  |  |
@@ -525,74 +573,80 @@ the NIST bytes contradict or complete the v10 text.
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 189 — XT B-Rep Element data collection (p.285) | opaque | opaque |  |  |
+| Fig. 189 — XT B-Rep Element data collection (p.285) | opaque | opaque | BrepOpacityTest | framing preserved; fields never read |
 | Fig. 190 — Integer Attribute Data collection (p.287) | opaque | opaque |  |  |
-| Fig. 191 — MultiXT B-Rep Element data collection (p.288) | opaque | opaque |  |  |
+| Fig. 191 — MultiXT B-Rep Element data collection (p.288) | opaque | opaque | BrepOpacityTest | as above |
 | Fig. 192 — Split a face (p.367) | opaque | opaque |  |  |
 | Fig. 193 — Merge faces (p.368) | opaque | opaque |  |  |
 
 
 ## Annex G — JT ULP Segment
 
+*Prefilled:* **opaque by doctrine (issue #1 rule 3)** — ULP is the "semi-precise geometric Boundary
+Representation" of §8.3, i.e. B-rep, so the same rule covers it: carried losslessly, never
+interpreted. No fixture carries a ULP segment either; `BrepOpacityTest` covers the segment kind and
+skips visibly until one does. The one piece of Annex G this library *does* use is Table 100, the
+analytic surface type set §9 borrows for LWPA (see the §9 rows).
+
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| JT ULP Element (p.370) | — | — |  |  |
-| G.1.1 Topology Data (p.372) | — | — |  |  |
-| G.1.2 Geometric Data (p.389) | — | — |  |  |
-| G.1.3 Material Attribute Element Properties (p.413) | — | — |  |  |
-| G.1.4 Information Recovery (p.414) | — | — |  |  |
+| JT ULP Element (p.370) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| G.1.1 Topology Data (p.372) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| G.1.2 Geometric Data (p.389) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| G.1.3 Material Attribute Element Properties (p.413) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| G.1.4 Information Recovery (p.414) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 194 — JT ULP Segment data collection (p.370) | — | — |  |  |
-| Fig. 195 — JT ULP Element data collection (p.371) | — | — |  |  |
-| Fig. 196 — Topology Data collection (p.372) | — | — |  |  |
-| Fig. 197 — Topological Entity Counts data collection (p.373) | — | — |  |  |
-| Fig. 198 — Combined Predictor Type data collection (p.374) | — | — |  |  |
-| Fig. 199 — Regions Topology Data collection (p.375) | — | — |  |  |
-| Fig. 200 — Shells Topology Data collection (p.376) | — | — |  |  |
-| Fig. 201 — Faces Topology Data collection (p.377) | — | — |  |  |
-| Fig. 202 — Loops Topology Data collection (p.380) | — | — |  |  |
-| Fig. 203 — CoEdges Topology Data collection (p.382) | — | — |  |  |
-| Fig. 204 — Sample Model with Randomly Assigned Edge Indices (p.383) | — | — |  |  |
-| Fig. 205 — Sample Model with Sequentially Assigned Edge Indices (p.383) | — | — |  |  |
-| Fig. 206 — Surface Domain Classification (p.385) | — | — |  |  |
-| Fig. 207 — Edges Topology Data collection (p.387) | — | — |  |  |
-| Fig. 208 — Geometric Data collection (p.389) | — | — |  |  |
-| Fig. 209 — Geometric Entity Counts (p.390) | — | — |  |  |
-| Fig. 210 — Degree Table data collection (p.391) | — | — |  |  |
-| Fig. 211 — Recover Nurbs Degree (p.392) | — | — |  |  |
-| Fig. 212 — Number of Control Points Table data collection (p.393) | — | — |  |  |
-| Fig. 213 — Recover Number of Control Points (p.394) | — | — |  |  |
-| Fig. 214 — Dimension Table data collection (p.395) | — | — |  |  |
-| Fig. 215 — Recover Dimension (p.396) | — | — |  |  |
-| Fig. 216 — 3D Unit Vector Table data collection (p.397) | — | — |  |  |
-| Fig. 217 — Recover Dimension (p.398) | — | — |  |  |
-| Fig. 218 — 2D Unit Vector Table data collection (p.399) | — | — |  |  |
-| Fig. 219 — Recover 2D Unit Vector (p.399) | — | — |  |  |
-| Fig. 220 — 3D MCS Point Table data collection (p.400) | — | — |  |  |
-| Fig. 221 — Recover 3D MCS Points (p.402) | — | — |  |  |
-| Fig. 222 — Knot Vector Table data collection (p.403) | — | — |  |  |
-| Fig. 223 — Recover Knot Vectors (p.404) | — | — |  |  |
-| Fig. 224 — 1D MCS Table data collection (p.406) | — | — |  |  |
-| Fig. 225 — Recover 1D MCS Table (p.408) | — | — |  |  |
-| Fig. 226 — PCS Value Table data collection (p.409) | — | — |  |  |
-| Fig. 227 — Recover PCS Value Table (p.410) | — | — |  |  |
-| Fig. 228 — Radian Table data collection (p.411) | — | — |  |  |
-| Fig. 229 — Recover Radian Table (p.411) | — | — |  |  |
-| Fig. 231 — Recover Weight Table (p.413) | — | — |  |  |
-| Fig. 232 — Material Attribute Element Properties (p.414) | — | — |  |  |
-| Fig. 233 — Information Recovery (p.415) | — | — |  |  |
-| Fig. 234 — PCS Curve Recovery from Surface Domain (p.416) | — | — |  |  |
-| Fig. 235 — MCS Curve Recovery (p.417) | — | — |  |  |
-| Fig. 236 — MCS Curve Recovery from Surface Geometry (p.418) | — | — |  |  |
+| Fig. 194 — JT ULP Segment data collection (p.370) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 195 — JT ULP Element data collection (p.371) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 196 — Topology Data collection (p.372) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 197 — Topological Entity Counts data collection (p.373) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 198 — Combined Predictor Type data collection (p.374) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 199 — Regions Topology Data collection (p.375) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 200 — Shells Topology Data collection (p.376) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 201 — Faces Topology Data collection (p.377) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 202 — Loops Topology Data collection (p.380) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 203 — CoEdges Topology Data collection (p.382) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 204 — Sample Model with Randomly Assigned Edge Indices (p.383) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 205 — Sample Model with Sequentially Assigned Edge Indices (p.383) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 206 — Surface Domain Classification (p.385) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 207 — Edges Topology Data collection (p.387) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 208 — Geometric Data collection (p.389) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 209 — Geometric Entity Counts (p.390) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 210 — Degree Table data collection (p.391) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 211 — Recover Nurbs Degree (p.392) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 212 — Number of Control Points Table data collection (p.393) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 213 — Recover Number of Control Points (p.394) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 214 — Dimension Table data collection (p.395) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 215 — Recover Dimension (p.396) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 216 — 3D Unit Vector Table data collection (p.397) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 217 — Recover Dimension (p.398) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 218 — 2D Unit Vector Table data collection (p.399) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 219 — Recover 2D Unit Vector (p.399) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 220 — 3D MCS Point Table data collection (p.400) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 221 — Recover 3D MCS Points (p.402) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 222 — Knot Vector Table data collection (p.403) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 223 — Recover Knot Vectors (p.404) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 224 — 1D MCS Table data collection (p.406) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 225 — Recover 1D MCS Table (p.408) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 226 — PCS Value Table data collection (p.409) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 227 — Recover PCS Value Table (p.410) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 228 — Radian Table data collection (p.411) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 229 — Recover Radian Table (p.411) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 231 — Recover Weight Table (p.413) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 232 — Material Attribute Element Properties (p.414) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 233 — Information Recovery (p.415) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 234 — PCS Curve Recovery from Surface Domain (p.416) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 235 — MCS Curve Recovery (p.417) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
+| Fig. 236 — MCS Curve Recovery from Surface Geometry (p.418) | opaque | opaque |  | opaque by doctrine (issue #1 rule 3); no fixture carries a ULP segment |
 
 
 ## Annex H — (deprecated) PMI Data Segment
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| (deprecated) PMI data segment (p.419) | — | — |  |  |
+| (deprecated) PMI data segment (p.419) | done | — | MetaDataDocumentTest, MetaDataFixtureTest | Annex H's own instruction — "a PMI Data Segment should be treated exactly the same as a PMI Manager Meta Data Element" — is what `MetaDataDocument` implements: the same model serves Table 6 types 3 and 4. Fixture-verified on the NIST file's 14 type-3 segments, which the current Siemens writer still emits despite the deprecation (issue #9) |
 
 
 ## Annex I — Procedural Geometry: Evaluation and Approximation

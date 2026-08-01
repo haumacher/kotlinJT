@@ -213,6 +213,36 @@ sealed class LoadNote {
         override val message: String get() = "meta data element stream deviates from the Figure 107 structure: $detail"
     }
 
+    /** A Wireframe element stream that does not have the Figure 103 structure. */
+    data class WireframeStructureUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "WIREFRAME_STRUCTURE_UNRECOGNIZED"
+        override val message: String get() = "wireframe element stream deviates from the Figure 103 structure: $detail"
+    }
+
+    /** A JT LWPA element stream that does not have the Figure 99 structure. */
+    data class LwpaStructureUnrecognized(
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "LWPA_STRUCTURE_UNRECOGNIZED"
+        override val message: String get() = "LWPA element stream deviates from the Figure 99 structure: $detail"
+    }
+
+    /**
+     * The entropy-coded vectors inside a Compressed CAD Tag Data collection (Figure 154) did not
+     * decode. The collection's own Data Length pins its extent, so the coded bytes are kept
+     * verbatim next to the refusal and re-serialization stays byte-identical.
+     */
+    data class CadTagVectorsUnrecognized(
+        val location: String,
+        val detail: String,
+    ) : LoadNote() {
+        override val name: String get() = "CAD_TAG_VECTORS_UNRECOGNIZED"
+        override val message: String
+            get() = "$location: Compressed CAD Tag Data vectors did not decode ($detail); coded bytes preserved verbatim"
+    }
+
     /**
      * A Property Proxy property carries a Property Value Type outside Table 53. Its length is
      * unknown, so the property bag cannot continue past it: the keys decoded so far stay in

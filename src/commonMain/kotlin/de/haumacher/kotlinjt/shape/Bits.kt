@@ -52,6 +52,25 @@ internal class WordBitReader(
         val raw = readUnsigned(count)
         return (raw shl (32 - count)) shr (32 - count)
     }
+
+    /**
+     * Reads [count] bits (0..64) as an unsigned 64-bit value. §12.1.2: a field longer than 32
+     * bits carries its **low-order 32 bits first** — which is exactly what Annex B's
+     * `GetUnsignedBits(UInt64&, n)` does (`low32` then `high32`).
+     */
+    fun readUnsigned64(count: Int): Long {
+        if (count < 0 || count > 64) throw JtFormatException("bit count $count out of range")
+        val low = readUnsigned(if (count < 32) count else 32).toLong() and 0xFFFFFFFFL
+        val high = readUnsigned(if (count > 32) count - 32 else 0).toLong() and 0xFFFFFFFFL
+        return (high shl 32) or low
+    }
+
+    /** Reads [count] bits (0..64) as a sign-extended 64-bit value (Annex B `GetSignedBits`). */
+    fun readSigned64(count: Int): Long {
+        if (count == 0) return 0
+        val raw = readUnsigned64(count)
+        return if (count < 64) (raw shl (64 - count)) shr (64 - count) else raw
+    }
 }
 
 /**
@@ -96,5 +115,20 @@ internal class ByteBitReader(
         if (count == 0) return 0
         val raw = readUnsigned(count)
         return (raw shl (32 - count)) shr (32 - count)
+    }
+
+    /** Reads [count] bits (0..64) as an unsigned 64-bit value, low-order 32 bits first (§12.1.2). */
+    fun readUnsigned64(count: Int): Long {
+        if (count < 0 || count > 64) throw JtFormatException("bit count $count out of range")
+        val low = readUnsigned(if (count < 32) count else 32).toLong() and 0xFFFFFFFFL
+        val high = readUnsigned(if (count > 32) count - 32 else 0).toLong() and 0xFFFFFFFFL
+        return (high shl 32) or low
+    }
+
+    /** Reads [count] bits (0..64) as a sign-extended 64-bit value. */
+    fun readSigned64(count: Int): Long {
+        if (count == 0) return 0
+        val raw = readUnsigned64(count)
+        return if (count < 64) (raw shl (64 - count)) shr (64 - count) else raw
     }
 }

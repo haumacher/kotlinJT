@@ -105,15 +105,17 @@ sealed class Int32Cdp {
     /**
      * CODEC type 3 in the v10 generation (Figure 132/133): the Arithmetic CODEC with the
      * restructured probability context. [outOfBand] is `null` exactly when the context has
-     * no escape entry — the fixture-established presence rule (DESIGN.md).
+     * no escape entry — the fixture-established presence rule (DESIGN.md) — and its *form*
+     * follows Figure 132's branch on whether the segment is externally compressed
+     * ([Int32OutOfBand]).
      */
     data class ArithmeticV10(
         override val valueCount: Int,
         val codeTextLength: Int,
         val codeText: List<Int>,
         val probabilityContext: Int32ProbabilityContextV10,
-        /** The nested out-of-band packet; on the wire only when the context has an escape entry. */
-        val outOfBand: Int32Cdp?,
+        /** The out-of-band values; on the wire only when the context has an escape entry. */
+        val outOfBand: Int32OutOfBand?,
         override val values: List<Int>,
     ) : Int32Cdp() {
         override fun encode(w: ByteWriter) {
@@ -281,19 +283,27 @@ sealed class Int32Cdp {
          * Int32CDP — verified against the NIST 10.5 fixture, DESIGN.md). Decoding is strict:
          * a malformed packet throws [JtFormatException] (the element-level decode turns that
          * into an opaque carry with a named note).
+         *
+         * [externallyCompressed] selects Figure 132's out-of-band branch: `false` (the Shape
+         * LOD segments, Table 6's non-compressible types) means the OOB values arrive as a
+         * *nested packet*; `true` (LSG / meta / PMI / B-rep / wireframe / LWPA segments, whose
+         * whole element data is LZMA- or ZLIB-compressed) means they arrive as an I32 count
+         * plus plain values. Both branches are fixture-verified — see DESIGN.md delta 37.
          */
         fun readV10(
             r: ByteReader,
             depth: Int = 0,
+            externallyCompressed: Boolean = false,
         ): Int32Cdp {
             if (depth > MAX_DEPTH) throw JtFormatException("Int32CDP nesting deeper than $MAX_DEPTH")
             val count = r.readI32()
             if (count < 0) throw JtFormatException("Int32CDP value count $count is negative")
             if (count == 0) return Empty
             return when (val codec = r.readU8().toInt()) {
-                CODEC_CHOPPER -> readChopperV10(r, count, depth)
-                CODEC_MOVE_TO_FRONT -> readMoveToFront(r, count, depth)
-                CODEC_NULL, CODEC_BITLENGTH, CODEC_ARITHMETIC -> readCodeTextCodecV10(r, count, codec, depth)
+                CODEC_CHOPPER -> readChopperV10(r, count, depth, externallyCompressed)
+                CODEC_MOVE_TO_FRONT -> readMoveToFront(r, count, depth, externallyCompressed)
+                CODEC_NULL, CODEC_BITLENGTH, CODEC_ARITHMETIC ->
+                    readCodeTextCodecV10(r, count, codec, depth, externallyCompressed)
                 else -> throw JtFormatException("Int32CDP CODEC type $codec is not in the v10 value set {0,1,3,4,5}")
             }
         }
@@ -303,6 +313,7 @@ sealed class Int32Cdp {
             count: Int,
             codec: Int,
             depth: Int,
+            externallyCompressed: Boolean,
         ): Int32Cdp {
             val (codeTextLength, codeText) = readCodeText(r)
             val wordCount = codeText.size
@@ -319,10 +330,18 @@ sealed class Int32Cdp {
                 }
                 else -> {
                     val context = Int32ProbabilityContextV10.read(r)
-                    // The out-of-band packet is on the wire only when the context can emit an
+                    // The out-of-band data is on the wire only when the context can emit an
                     // escape symbol — fixture-established (DESIGN.md; Figure 132 does not
-                    // condition the field).
-                    val outOfBand = if (context.hasEscape) readV10(r, depth + 1) else null
+                    // condition the field) — and its form follows the external-compression
+                    // branch of the same figure.
+                    val outOfBand =
+                        if (!context.hasEscape) {
+                            null
+                        } else if (externallyCompressed) {
+                            Int32OutOfBand.Raw.read(r)
+                        } else {
+                            Int32OutOfBand.Nested(readV10(r, depth + 1, externallyCompressed = false))
+                        }
                     val values =
                         if (codeTextLength == 0) {
                             // §12.1.1: with CodeText Length 0 all values are out-of-band.
@@ -347,6 +366,7 @@ sealed class Int32Cdp {
             r: ByteReader,
             count: Int,
             depth: Int,
+            externallyCompressed: Boolean,
         ): Int32Cdp {
             val chopBits = r.readU8().toInt()
             if (chopBits == 0) {
@@ -356,8 +376,8 @@ sealed class Int32Cdp {
             }
             val bias = r.readI32()
             val span = r.readU8().toInt()
-            val msb = readV10(r, depth + 1)
-            val lsb = readV10(r, depth + 1)
+            val msb = readV10(r, depth + 1, externallyCompressed)
+            val lsb = readV10(r, depth + 1, externallyCompressed)
             if (msb.valueCount != count || lsb.valueCount != count) {
                 throw JtFormatException(
                     "chopped data size mismatch: ${msb.valueCount} MSB / ${lsb.valueCount} LSB values, expected $count",
@@ -376,9 +396,10 @@ sealed class Int32Cdp {
             r: ByteReader,
             count: Int,
             depth: Int,
+            externallyCompressed: Boolean,
         ): Int32Cdp {
-            val windowValues = readV10(r, depth + 1)
-            val windowOffsets = readV10(r, depth + 1)
+            val windowValues = readV10(r, depth + 1, externallyCompressed)
+            val windowOffsets = readV10(r, depth + 1, externallyCompressed)
             if (windowOffsets.valueCount != count) {
                 throw JtFormatException("move-to-front offsets decode ${windowOffsets.valueCount} values, expected $count")
             }
@@ -410,6 +431,44 @@ sealed class Int32Cdp {
                 throw JtFormatException("move-to-front left ${windowValues.valueCount - valueIndex} window values unconsumed")
             }
             return MoveToFront(count, windowValues, windowOffsets, values)
+        }
+    }
+}
+
+/**
+ * The out-of-band values of a v10 Arithmetic CODEC packet in either of the two forms
+ * Figure 132 branches between: a nested [Int32Cdp] when the segment is *not* externally
+ * compressed, or an `I32 Out-of-Band Value Count` plus that many plain `I32`s when it is.
+ * Both are fixture-verified (DESIGN.md delta 37) and both re-serialize verbatim.
+ */
+sealed class Int32OutOfBand {
+    /** The out-of-band values in decoded order. */
+    abstract val values: List<Int>
+
+    abstract fun encode(w: ByteWriter)
+
+    /** The nested-packet form (non-compressed segments: Shape LOD). */
+    data class Nested(val packet: Int32Cdp) : Int32OutOfBand() {
+        override val values: List<Int> get() = packet.values
+
+        override fun encode(w: ByteWriter) = packet.encode(w)
+    }
+
+    /** The count-plus-plain-values form (externally compressed segments). */
+    data class Raw(override val values: List<Int>) : Int32OutOfBand() {
+        override fun encode(w: ByteWriter) {
+            w.writeI32(values.size)
+            for (value in values) w.writeI32(value)
+        }
+
+        companion object {
+            internal fun read(r: ByteReader): Raw {
+                val count = r.readI32()
+                if (count < 0 || count.toLong() * 4 > r.remaining) {
+                    throw JtFormatException("out-of-band value count $count does not fit the remaining ${r.remaining} bytes")
+                }
+                return Raw(List(count) { r.readI32() })
+            }
         }
     }
 }
@@ -820,8 +879,42 @@ internal fun decodeArithmetic(
     entries: List<ArithmeticEntry>,
     outOfBand: List<Int>,
 ): List<Int> {
-    if (entries.isEmpty()) throw JtFormatException("arithmetic CODEC with an empty probability context")
-    val total = entries.sumOf { it.occurrenceCount }
+    val symbols = decodeArithmeticSymbolIndices(codeText, valueCount, entries.map { it.occurrenceCount })
+    var oobIndex = 0
+    val out = ArrayList<Int>(valueCount)
+    for (index in symbols) {
+        val entry = entries[index]
+        if (entry.isEscape) {
+            if (oobIndex >= outOfBand.size) {
+                throw JtFormatException("arithmetic escape symbol without a matching out-of-band value")
+            }
+            out.add(outOfBand[oobIndex])
+            oobIndex += 1
+        } else {
+            out.add(entry.associatedValue)
+        }
+    }
+    if (oobIndex != outOfBand.size) {
+        throw JtFormatException("arithmetic stream left ${outOfBand.size - oobIndex} out-of-band values unconsumed")
+    }
+    return out
+}
+
+/**
+ * The arithmetic decoder core, shared by the Int32 and Int64 packet generations: decodes
+ * [valueCount] symbols from [codeText] against the [occurrences] histogram and returns the
+ * *index* of the probability-context entry each symbol selected. Mapping an index to a value
+ * (or to the next out-of-band value, when the entry is the escape) is the caller's job, which
+ * is what lets Int64CDP reuse this unchanged (§12.1.2: "Int64CDP shares the same encoding and
+ * compression logic as Int32CDP").
+ */
+internal fun decodeArithmeticSymbolIndices(
+    codeText: IntArray,
+    valueCount: Int,
+    occurrences: List<Int>,
+): IntArray {
+    if (occurrences.isEmpty()) throw JtFormatException("arithmetic CODEC with an empty probability context")
+    val total = occurrences.sum()
     if (total <= 0 || total > 0xFFFF) throw JtFormatException("arithmetic probability context total count $total out of range")
 
     if (codeText.isEmpty()) throw JtFormatException("arithmetic CodeText is shorter than the initial 16-bit code")
@@ -829,39 +922,29 @@ internal fun decodeArithmetic(
     var code = bits.readUnsigned(16)
     var low = 0
     var high = 0xFFFF
-    var oobIndex = 0
 
     // The declared length is padded up to whole words; the final symbol's renormalization may
     // read into that zero padding, but never past the stored words.
     fun nextBit(): Int = if (bits.consumed < codeText.size * 32) bits.readBit() else 0
 
-    val out = ArrayList<Int>(valueCount)
-    while (out.size < valueCount) {
+    val out = IntArray(valueCount)
+    for (i in 0 until valueCount) {
         val rescaled = (((code - low + 1) * total - 1) / (high - low + 1))
         var cumulative = 0
-        var entry: ArithmeticEntry? = null
-        for (e in entries) {
-            if (rescaled < cumulative + e.occurrenceCount) {
-                entry = e
+        var hit = -1
+        for ((index, occurrence) in occurrences.withIndex()) {
+            if (rescaled < cumulative + occurrence) {
+                hit = index
                 break
             }
-            cumulative += e.occurrenceCount
+            cumulative += occurrence
         }
-        val hit = entry ?: throw JtFormatException("arithmetic symbol lookup failed for rescaled count $rescaled")
-
-        if (hit.isEscape) {
-            if (oobIndex >= outOfBand.size) {
-                throw JtFormatException("arithmetic escape symbol without a matching out-of-band value")
-            }
-            out.add(outOfBand[oobIndex])
-            oobIndex += 1
-        } else {
-            out.add(hit.associatedValue)
-        }
+        if (hit < 0) throw JtFormatException("arithmetic symbol lookup failed for rescaled count $rescaled")
+        out[i] = hit
 
         // Remove the symbol from the stream (16-bit renormalization).
         val range = high - low + 1
-        high = low + range * (cumulative + hit.occurrenceCount) / total - 1
+        high = low + range * (cumulative + occurrences[hit]) / total - 1
         low = low + range * cumulative / total
         while (true) {
             if ((high xor low).inv() and 0x8000 != 0) {
@@ -878,9 +961,6 @@ internal fun decodeArithmetic(
             high = ((high shl 1) or 1) and 0xFFFF
             code = ((code shl 1) or nextBit()) and 0xFFFF
         }
-    }
-    if (oobIndex != outOfBand.size) {
-        throw JtFormatException("arithmetic stream left ${outOfBand.size - oobIndex} out-of-band values unconsumed")
     }
     return out
 }

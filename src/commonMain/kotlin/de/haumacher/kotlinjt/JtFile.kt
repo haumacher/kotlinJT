@@ -189,7 +189,23 @@ data class JtFile(
             val kind = SegmentKind.fromCode(typeCode)
             if (kind == null) {
                 notes.add(LoadNote.UnknownSegmentType(entry.segmentId, typeCode))
-                return JtSegment(entry, headerId, typeCode, declaredLength, null, payload, null, null, null)
+                // A type Table 6 does not define still gets its contents *looked at*: the
+                // probe below only accepts what it can verify (a well-formed compression
+                // header whose codec decodes into a terminated element list), and it adds no
+                // note of its own — the unknown type is already named. Nothing is guessed and
+                // re-serialization still emits the raw payload either way.
+                val probed = probeUndefinedType(header, entry, payload)
+                return JtSegment(
+                    entry,
+                    headerId,
+                    typeCode,
+                    declaredLength,
+                    null,
+                    payload,
+                    probed?.first,
+                    probed?.second,
+                    probed?.let { scanElements(it.second, header.byteOrder) },
+                )
             }
 
             var compression: CompressionHeader? = null
@@ -210,6 +226,41 @@ data class JtFile(
                 )
             }
             return JtSegment(entry, headerId, typeCode, declaredLength, kind, payload, compression, elementData, elements)
+        }
+
+        /**
+         * Looks inside a segment whose type Table 6 does not define. Returns the compression
+         * header and decoded element data only when *every* check passes: the payload starts
+         * with a well-formed Logical-Element-Header-Compressed field triple (Table 8/9 flag and
+         * algorithm, declared length filling the payload exactly), the registered codec decodes
+         * it, and the result frames at least one properly terminated element list. Anything else
+         * yields `null` and the segment stays exactly as opaque as before — silently, because
+         * the segment's type is already named by `UNKNOWN_SEGMENT_TYPE` and a failed probe adds
+         * no information. NX 10.5's undefined types 23 and 31 pass it; see DESIGN.md.
+         */
+        private fun probeUndefinedType(
+            header: FileHeader,
+            entry: TocEntry,
+            payload: Bytes,
+        ): Pair<CompressionHeader, Bytes>? {
+            if (payload.size < 9) return null
+            val reader = ByteReader(payload.toByteArray(), header.byteOrder)
+            val flag = reader.readU32()
+            val compressedDataLength = reader.readI32()
+            val algorithmCode = reader.readU8().toInt()
+            if (flag != 2u && flag != 3u) return null
+            if (algorithmCode != 2 && algorithmCode != 3) return null
+            val compression = CompressionHeader(flag, compressedDataLength, algorithmCode)
+            if (compression.bodyLength < 0 || 9 + compression.bodyLength != payload.size) return null
+            val codec = SegmentCodecs.byAlgorithmCode(algorithmCode) ?: return null
+            val decoded =
+                when (val result = codec.decode(entry.segmentId, payload.slice(9, payload.size))) {
+                    is CodecResult.Decoded -> result.data
+                    is CodecResult.Refused -> return null
+                }
+            val scan = scanElements(decoded, header.byteOrder)
+            if (scan.lists.isEmpty() || !scan.lists.first().terminated) return null
+            return compression to decoded
         }
 
         private fun decodeCompressible(

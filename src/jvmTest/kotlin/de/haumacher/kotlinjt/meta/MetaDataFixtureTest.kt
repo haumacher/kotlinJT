@@ -182,6 +182,26 @@ class MetaDataFixtureTest {
                                     assertTrue(property.key.hiddenFlag in 0..1, "$segmentId: hidden flag outside Table 59")
                                 }
                             }
+                            // Figure 154's tag vectors decode since the Int64 CDP landed
+                            // (issue #10): every tag type is a Table 72 value and the tag list
+                            // has one entry per type entry. The tag *count* is deliberately not
+                            // tied to the CAD Tag Index Count — NX writes more tags than
+                            // indices in most bodies (see the codec's comment).
+                            val cad = pmi.cadTagData
+                            if (pmi.cadTagsFlag == 1) {
+                                assertNotNull(cad, "$segmentId: CAD Tags Flag 1 without CAD Tag Data")
+                                val vectors = cad!!.compressed.tags
+                                assertNotNull(vectors, "$segmentId: CAD tag vectors did not decode")
+                                for (type in vectors!!.tagTypes.values) {
+                                    assertTrue(type == 1 || type == 2, "$segmentId: CAD tag type $type outside Table 72")
+                                }
+                                assertEquals(
+                                    vectors.tagTypes.size,
+                                    vectors.tags.size,
+                                    "$segmentId: one tag per CAD Tag Types entry",
+                                )
+                                assertEquals(0, cad.compressed.codedData.size, "$segmentId: coded bytes left over")
+                            }
                             for (font in pmi.fonts) {
                                 assertEquals(
                                     font.characterSet.size,

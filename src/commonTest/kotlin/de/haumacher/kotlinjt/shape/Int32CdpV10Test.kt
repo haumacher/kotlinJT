@@ -138,6 +138,41 @@ class Int32CdpV10Test {
         assertNull(cdp.outOfBand)
     }
 
+    /**
+     * Figure 132 branches the out-of-band field on whether the segment is externally compressed:
+     * in a compressed segment (LSG, meta data, PMI, B-rep, wireframe, LWPA) the values arrive as
+     * an `I32 Out-of-Band Value Count` plus plain `VecI32` values instead of a nested packet.
+     * Same context and CodeText as [arithmeticCodecDecodesWithEscapeAndNestedOutOfBand], only the
+     * out-of-band form differs — the form the NIST Wireframe Rep bodies use (DESIGN.md delta 37).
+     *
+     * spec: Figure 132
+     */
+    @Test
+    fun arithmeticOutOfBandIsCountPlusPlainValuesWhenTheSegmentIsCompressed() {
+        val bytes =
+            bytesOf {
+                writeI32(6)
+                writeU8(3u)
+                writeI32(26)
+                writeI32(0x52C00000)
+                writeBytes(
+                    byteArrayOf(0x00, 0x03, 0x18, 0x38, 0x00, 0x00, 0x00, 0x00, 0x30, 0xE0.toByte(), 0x84.toByte(), 0xC1.toByte(), 0x00),
+                )
+                // I32 Out-of-Band Value Count + VecI32 OOB Values, no packet framing.
+                writeI32(1)
+                writeI32(42)
+            }
+        val reader = ByteReader(bytes, Endianness.LITTLE_ENDIAN)
+        val cdp = Int32Cdp.readV10(reader, externallyCompressed = true)
+        assertEquals(bytes.size, reader.position, "packet must consume exactly its bytes")
+        val writer = ByteWriter(Endianness.LITTLE_ENDIAN)
+        cdp.encode(writer)
+        assertContentEquals(bytes, writer.toByteArray(), "encode(decode(packet)) must be byte-identical")
+        assertIs<Int32Cdp.ArithmeticV10>(cdp)
+        assertEquals(listOf(7, 9, 7, 42, 7, 9), cdp.values)
+        assertIs<Int32OutOfBand.Raw>(cdp.outOfBand)
+    }
+
     // spec: §12.1.1 (Move-to-Front pseudo-CODEC)
     @Test
     fun moveToFrontReplaysTheRecencyWindow() {

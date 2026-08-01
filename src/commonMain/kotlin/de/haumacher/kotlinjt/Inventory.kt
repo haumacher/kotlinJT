@@ -21,7 +21,7 @@ fun JtFile.inventory(): String {
         when (region) {
             is FileRegion.SegmentRegion -> {
                 val segment = region.segment
-                val kindLabel = segment.kind?.label ?: "UNKNOWN"
+                val kindLabel = UndefinedSegmentTypes.labelFor(segment.typeCode)
                 sb.append(index.toString().padStart(3)).append("  ")
                     .append(segment.offset.toString().padEnd(8)).append("  ")
                     .append(segment.length.toString().padEnd(8)).append("  ")
@@ -90,7 +90,7 @@ fun JtFile.inventoryJson(hash: ((ByteArray) -> String)? = null): String {
         sb.append("    {")
         sb.append("\"guid\": \"").append(segment.tocEntry.segmentId).append("\", ")
         sb.append("\"type\": ").append(segment.typeCode).append(", ")
-        sb.append("\"typeName\": \"").append(segment.kind?.label ?: "UNKNOWN").append("\", ")
+        sb.append("\"typeName\": \"").append(UndefinedSegmentTypes.labelFor(segment.typeCode)).append("\", ")
         sb.append("\"offset\": ").append(segment.offset).append(", ")
         sb.append("\"length\": ").append(segment.length).append(", ")
         sb.append("\"compression\": ")

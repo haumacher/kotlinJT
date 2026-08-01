@@ -89,6 +89,14 @@ object ObjectTypeIds {
     val JT_LWPA_ELEMENT: Guid = guid(0xd67f8ea8, 0xf524, 0x4879, 0x92, 0x8c, 0x4c, 0x3a, 0x56, 0x1f, 0xb9, 0x3a)
     val STEP_BREP_ELEMENT: Guid = guid(0x869c7d53, 0xccb0, 0x451b, 0xb2, 0x03, 0xd1, 0x42, 0x81, 0x56, 0x14, 0x56)
 
+    /**
+     * From Annex F §F.1.3 (Figure 191); **missing from Table A.1**, which lists no element type
+     * for segment type 30 at all — a second spec inconsistency of the same kind as
+     * [VECTOR4F_PROPERTY_ATOM]. The MultiXT B-Rep segment of the NIST 10.5 fixture frames
+     * exactly one element with this GUID and Object Base Type 9.
+     */
+    val MULTI_XT_BREP_ELEMENT: Guid = guid(0x49829521, 0x1835, 0x49c3, 0x8b, 0xef, 0xdd, 0xc4, 0x3b, 0xfe, 0x5e, 0x88)
+
     private val names: Map<Guid, String> =
         buildMap {
             put(Guid.END_OF_ELEMENTS, "End-Of-Elements")
@@ -147,6 +155,7 @@ object ObjectTypeIds {
             put(JT_ULP_ELEMENT, "JT ULP Element")
             put(JT_LWPA_ELEMENT, "JT LWPA Element")
             put(STEP_BREP_ELEMENT, "STEP B-Rep Element")
+            put(MULTI_XT_BREP_ELEMENT, "MultiXT B-Rep Element")
         }
 
     /** The Annex A type name for [guid], `null` when the GUID is not in Table A.1. */

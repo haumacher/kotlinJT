@@ -1,5 +1,6 @@
 package de.haumacher.kotlinjt.meta
 
+import de.haumacher.kotlinjt.encoding.CompressedCadTagData
 import de.haumacher.kotlinjt.io.Bytes
 import de.haumacher.kotlinjt.io.Guid
 import de.haumacher.kotlinjt.lsg.Vec3F32
@@ -368,22 +369,11 @@ data class PmiPolygonData(
 )
 
 /**
- * Compressed CAD Tag Data (Figure 154, §12.1.16): the framing is decoded, the entropy-coded
- * tag vectors are preserved verbatim in [codedData]. Interpreting them needs the Int64 CDP
- * (Figures 135–137), which no §7 structure has required yet — a recorded deferral, not a
- * refusal: the framing's own Data Length makes the extent exact, so nothing is guessed and
- * nothing is lost.
+ * PMI CAD Tag Data (Figure 129): one CAD Tag index per PMI entity, plus the
+ * [CompressedCadTagData] collection of Figure 154 — decoded since the Int64 CDP landed with
+ * issue #10; a collection whose coded vectors do not decode keeps them verbatim with a named
+ * note.
  */
-data class CompressedCadTagData(
-    /** The collection's U8 Version Number. */
-    val version: Int,
-    /** The collection's inner I32 Version Number. */
-    val innerVersion: Int,
-    /** `VecI32{Int32CDP}: CAD Tag Types` and the tag vectors, verbatim. */
-    val codedData: Bytes,
-)
-
-/** PMI CAD Tag Data (Figure 129): one CAD Tag index per PMI entity, plus the coded tags. */
 data class PmiCadTagData(
     val indices: List<Int>,
     val compressed: CompressedCadTagData,

@@ -75,6 +75,7 @@ data class MetaDataDocument(
             elementData: Bytes,
             version: JtVersion,
             order: Endianness,
+            externallyCompressed: Boolean = true,
         ): MetaDataDecodeResult {
             val generation = LsgGeneration.of(version)
             val notes = mutableListOf<LoadNote>()
@@ -98,7 +99,9 @@ data class MetaDataDocument(
                 }
                 val body = reader.readBytes(length - 16)
                 val location = "meta data element at offset $start"
-                elements.add(decodeMetaElementBody(typeId, body, generation, order, notes, location))
+                elements.add(
+                    decodeMetaElementBody(typeId, body, generation, order, externallyCompressed, notes, location),
+                )
             }
 
             var table: PropertyTable? = null
@@ -153,7 +156,8 @@ fun JtFile.metaDataSegments(): List<JtSegment> = segments.filter { it.isMetaData
 fun JtFile.decodeMetaData(segment: JtSegment): MetaDataDecodeResult? {
     if (!segment.isMetaDataSegment) return null
     val elementData = segment.elementData ?: return null
-    return MetaDataDocument.decode(elementData, header.version, header.byteOrder)
+    val compressed = (segment.compression?.algorithmCode ?: 1) != 1
+    return MetaDataDocument.decode(elementData, header.version, header.byteOrder, compressed)
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +169,7 @@ private fun decodeMetaElementBody(
     body: ByteArray,
     generation: LsgGeneration,
     order: Endianness,
+    externallyCompressed: Boolean,
     notes: MutableList<LoadNote>,
     location: String,
 ): MetaDataElement {
@@ -196,9 +201,13 @@ private fun decodeMetaElementBody(
                     null
                 } else {
                     { r ->
-                        readPmiManagerMetaDataElement(r, generation) {
-                            localNotes.add(LoadNote.PmiManagerTailUndocumented(location, it.byteCount))
-                        }
+                        readPmiManagerMetaDataElement(
+                            r,
+                            generation,
+                            externallyCompressed,
+                            { localNotes.add(LoadNote.PmiManagerTailUndocumented(location, it.byteCount)) },
+                            { localNotes.add(LoadNote.CadTagVectorsUnrecognized(location, it)) },
+                        )
                     }
                 }
             else -> null

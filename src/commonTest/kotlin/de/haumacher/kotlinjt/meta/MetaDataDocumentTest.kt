@@ -55,6 +55,14 @@ class MetaDataDocumentTest {
         return writer.toByteArray()
     }
 
+    /** A null-CODEC Int32CDP: count, codec 0, CodeText length, then the values as words. */
+    private fun ByteWriter.writeNullInt32Packet(values: List<Int>) {
+        writeI32(values.size)
+        writeU8(0u)
+        writeI32(32 * values.size)
+        for (value in values) writeI32(value)
+    }
+
     /** The Figure-78 empty Property Table every real producer writes after its elements. */
     private fun emptyPropertyTable(order: Endianness): ByteArray {
         val writer = ByteWriter(order)
@@ -348,10 +356,14 @@ class MetaDataDocumentTest {
             writeI32(0)
             writeI32(1)
             writeI32(2)
+            // Compressed CAD Tag Data (Figure 154): three 32-bit tags, null CODEC throughout.
+            // Both tag vectors are always written — the Type-2 one as an empty packet.
             writeU8(1u) // Compressed CAD Tag Data version
-            writeI32(8 + 5) // data length: this field, the inner version and the coded bytes
+            writeI32(8 + 21 + 21 + 4) // data length: this field, the inner version, the vectors
             writeI32(1) // inner version
-            writeBytes(byteArrayOf(1, 2, 3, 4, 5))
+            writeNullInt32Packet(listOf(1, 1, 1)) // CAD Tag Types (Table 72: 32-bit)
+            writeNullInt32Packet(listOf(4711, 4712, 4713)) // CAD Tags Type-1
+            writeI32(0) // CAD Tags Type-2: the empty packet
             // --- Fonts
             writeI32(1)
             writeMbString("glyphs-1")
@@ -477,7 +489,9 @@ class MetaDataDocumentTest {
                 // Figure 129 + Figure 154.
                 assertEquals(1, pmi.cadTagsFlag)
                 assertEquals(listOf(0, 1, 2), pmi.cadTagData?.indices)
-                assertEquals(5, pmi.cadTagData?.compressed?.codedData?.size)
+                assertEquals(listOf(1, 1, 1), pmi.cadTagData?.compressed?.tags?.tagTypes?.values)
+                assertEquals(listOf(4711L, 4712L, 4713L), pmi.cadTagData?.compressed?.tags?.tags)
+                assertEquals(0, pmi.cadTagData?.compressed?.codedData?.size)
 
                 val font = pmi.fonts.single()
                 assertEquals("glyphs-1", font.name)

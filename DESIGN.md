@@ -503,8 +503,9 @@ depends on re-compression.
 the Figure-78 six-byte empty property table except the LSG, which carries a real one): the
 LSG (13 KB → 90 736 bytes), 14 PMI Data, 30 Meta Data, 8 XT B-Rep, 5 Wireframe, 1 MultiXT
 B-Rep. The 44 meta data / PMI bodies decode typed since issue #9 (see *Layer 1: Meta data and
-PMI*); the B-rep and wireframe bodies remain opaque — B-rep by doctrine, wireframe pending its
-own package.
+PMI*) and the 5 wireframe bodies since issue #10 (see *§8–§10*); the B-rep bodies stay opaque by
+doctrine, with that opacity now proven rather than asserted. The 9 streams inside the undefined NX
+types 23 and 31 do reach a codec since issue #10 — through a verified probe, not a guess.
 
 ## v10.0 vs 10.5 LSG element deltas (established, with byte evidence from the NIST fixture)
 
@@ -958,6 +959,221 @@ Recorded observations from the same evidence:
   in either fixture, so those two Table 53 rows are exercised only by the hand-built per-figure
   test — recorded honestly rather than claimed fixture-verified.
 
+## §8–§10: wireframe reads, B-rep stays sealed, nothing unnamed (issue #10)
+
+**What this package settled.** After §11 three ledger blocks were still `—` and nine segments of
+the NIST fixture were anonymous. All of it now has a final fate: **§10 Wireframe decodes typed**
+against five real bodies, **§9 LWPA decodes spec-derived** because its figures leave nothing to
+infer, **§8 B-rep is `opaque` with a committed proof** instead of a claim, and the two segment
+types **Table 6 does not define at all** are named, looked into and preserved verbatim.
+
+### §10 Wireframe: what the five NIST bodies actually contain
+
+`de.haumacher.kotlinjt.wireframe` (`WireframeDocument` + `WireframeRepElement`) follows the seam
+of `LsgDocument` / `ShapeLodDocument` / `MetaDataDocument`: element list, the Figure-78 property
+table (empty in all five), preserved remainder, and `decode` → `encode` byte-identical. All five
+segments decode **typed with zero notes**.
+
+| body (inflated) | edges | MCS curves | degrees | rational control points | stored knot values | CAD tags |
+|---|---|---|---|---|---|---|
+| 810 B | 22 | 22 | 1, 2 | 12 | 0 | 22 |
+| 1 066 B | 31 | 31 | 1 | 0 | 2 (1 curve, type 2) | 31 |
+| 1 625 B | 56 | 56 | 1, 2, 4 | 40 | 12 (2 curves, type 2) | 56 |
+| 1 701 B | 52 | 52 | 1, 2, 4 | 52 | 12 (2 curves, type 2) | 52 |
+| 2 452 B | 36 | 36 | 1, 2, 3, 4 | 100 | 64 (4 type-0 + 8 type-2 curves) | 36 |
+
+197 edges over 197 NURBS curves with 197 CAD tags — every tag a Table-72 **type 1** (32-bit)
+value, every `Edge Tag Counter` 0, every edge tag and MCS curve index the identity sequence
+`0 … n−1`. The curves are the section and reference curves of the NIST assembly's drilled and
+filleted parts: degree-1 straight lines, degree-2 rational arcs (weights 0.4142 = tan 22.5°,
+0.5046/0.4954 — circle-arc weights), a few degree-3/4 splines. Coordinates are lossless `F64`.
+
+**Why the layout is *established* and not merely plausible.** Exact byte consumption on five
+bodies would already be strong; four independent count identities make it exact, and the decoder
+enforces all four (a violation refuses to an opaque carry, never a misread):
+
+1. `Edge Count` == length of both `VecI32` vectors, and every MCS curve index is `< MCS Curve Count`;
+2. the control point vector holds **exactly three coordinates per control point** — rational
+   curves store *non-homogeneous* coordinates, so dimensionality 3 and 4 store equally many;
+3. `Weights Count` == the summed control point count of the **rational** curves (dimensionality 4,
+   Table 71) — 204 of them across the five bodies, all with a stored weight;
+4. the knot vector holds exactly the number of values §12.1.13's own `switch` predicts for the
+   curves listed per Table-68 category — 90 values across the five bodies, and the two categories
+   the fixture uses (0 and 2) are both exercised.
+
+**What is decoded and what is projected.** Every wire field is preserved (packets keep their codec
+byte, CodeText, probability-context bytes and nested packets), so `encode` is a projection.
+`NurbsCurve` derives per curve: degree, control point coordinates, weights (1.0 where the wire
+stores none, per §12.1.14) and the **stored** knot values with their Table-68 category. Assembling
+the *full* knot vector is deliberately not done: §12.1.13 prints the interior-filling step of its
+reconstruction sketch only for the `[x1:x2]` categories, and for a **trivial** knot vector — the
+majority in the fixture — the reference gives only the two defining cases and no reconstruction at
+all. A full vector would be part inference; the deferral names its condition instead.
+
+### Where the shared §12 collections live
+
+`de.haumacher.kotlinjt.encoding` holds the §12 collections that no §7 structure needed:
+`Int64Cdp` (Figures 135–137), `CompressedCurveData` (Figures 148–153) and `CompressedCadTagData`
+(Figure 154, now decoded). `Int32Cdp` stays in `shape`, where it landed with issue #4 — moving it
+would churn every shape file for no behavioral gain, and the two packages share the module's
+`internal` bit readers and the arithmetic decoder core either way. That core was refactored, not
+duplicated: `decodeArithmeticSymbolIndices` returns the *index* of the probability-context entry
+each symbol selected, and the Int32 and Int64 layers map indices to values — which is exactly what
+§12.1.2 promises ("Int64CDP shares the same encoding and compression logic as Int32CDP").
+
+`Int64Cdp` is fixture-verified for the arithmetic (12 packets, 8 with an escape), bitlength (2) and
+move-to-front (1) codecs; its null and chopper forms are spec-derived, their layout fixed by
+Figure 135 exactly as the fixture-verified Int32 forms.
+
+### §9 LWPA: decoded, spec-derived, and honest about it
+
+No fixture carries a JT LWPA segment. `de.haumacher.kotlinjt.lwpa` decodes it anyway because
+Figures 100 and 101 leave nothing to infer: the two `VecI32{Int32CDP}` vectors have their length
+fixed by `Analytic Surface Count`, and the four `VecF64` arrays are plain count-plus-values vectors
+written "in binary form" — no quantizer, no predictor, no hash, no conditional. Surface types are
+validated against Table 100 (which §9 borrows from Annex G: 0 Nurbs, 1 Plane, 2 Cylinder, 3 Cone,
+4 Sphere, 5 Torus, 6/7 reserved), and the element body must consume to its declared length, so a
+producer that contradicts the derivation gets an opaque carry with a named note. The JT 9
+generation is opaque-by-policy: the v9.5 reference lists segment type 24 in its Table 3 but
+documents no LWPA *element* at all. Figure 102 (Analytic Surface Creation) is a flow chart saying
+how many numbers each surface type consumes from the four arrays; building that projection waits
+for a consumer.
+
+### §8: opacity proven, not declared
+
+`BrepOpacityTest` (jvmTest) is the mechanism that turns issue #1's third rule into a tested
+property. Per fixture it asserts, for **every** segment of Table 6 types 2, 17, 20, 30 and 32:
+
+- the type is *labelled* (never "UNKNOWN"), its compression fields are read, its element data
+  decompresses, and its element list is terminated and ends in the Figure-78 empty property table;
+- the framed element's Object Type ID is a **named** type and the one its segment kind promises —
+  which required adding `ObjectTypeIds.MULTI_XT_BREP_ELEMENT`, because Annex A lists no element
+  type for segment type 30 at all while Annex F §F.1.3 gives the GUID (a second inconsistency of
+  the same kind as the Vector4f atom);
+- the element frames reconstruct the decompressed element data **byte for byte**, and the whole
+  file re-serializes byte-identically;
+- the payload really is Parasolid's own world: the XT transmit file's `TRANSMIT FILE` banner sits
+  inside it;
+- every segment is reachable from the LSG through the late-loaded key its type promises
+  (`JT_LLPROP_XTBREP`, `JT_LLPROP_MULTIXTBREP`).
+
+On the NIST fixture: **8 XT B-Rep + 1 MultiXT B-Rep, 583 617 payload bytes preserved, 1 723 645
+bytes of decompressed element data, 8 of the 9 carrying a Parasolid transmit file** (the ninth is
+a 74-byte XT element with no transmit file — an empty body). JT B-Rep (deprecated), ULP and STEP
+B-rep have no fixture; the suite covers their kinds and skips *visibly*. Their ledger fate is
+`opaque`, never `n/a`: the doctrine, not the absence of data, is what keeps them sealed — and the
+condition for reading them is a doctrine reversal, which belongs to the user, not to a package.
+
+### Segment types 23 and 31: named citizens, uninterpreted bodies
+
+`SegmentKind` stays exactly what its doc comment says — Table 6. The undefined codes get their own
+documented home, `UndefinedSegmentTypes`, and the inventory now prints **"undefined type 23"**
+instead of "UNKNOWN" (both in `inventory()` and in the sidecar JSON's `typeName`). The
+`UNKNOWN_SEGMENT_TYPE` note stays: the type really is undefined.
+
+Layer 0 additionally *looks inside* them. `probeUndefinedType` accepts a payload only when every
+check passes — a well-formed Table-8/9 flag and algorithm, a declared length filling the payload
+exactly, a codec that decodes, and a result whose first element list is properly terminated — and
+is silent when any fails (the segment then stays as opaque as before; a failed probe adds no
+information the named note does not already carry). This is verification, not guessing, and
+losslessness is untouched because re-serialization always emits the raw payload. Both NX types
+pass, which is why nine segments that used to show `compression: null, elementLists: null` now show
+their real framing in the committed sidecar.
+
+What the bytes prove, and nothing more (`UndefinedSegmentTypeTest`):
+
+- **Type 23** — eight segments, 4 489–58 933 payload bytes (8 258–130 383 inflated), all LZMA.
+  Each frames exactly **one** element of type `{CA7E6F89-97C8-47F0-9FCA-16990CFBE217}` — a GUID no
+  table of either reference contains — with Object Base Type 9 and object id 0, followed by the
+  end marker and the six-byte empty property table. In the LSG each is referenced by a Late Loaded
+  Property Atom keyed **`JT_LLPROP_FERIT`** declaring segment type 23, sitting on exactly the eight
+  Part Nodes that also carry `JT_LLPROP_XTBREP` — so a type-23 segment accompanies XT B-Rep, and
+  the test pins that pairing so a future fixture can break it loudly. Body structure, recorded as
+  observation only: `U8 1`, then `I32 1`, `I32 2`, `I32 2`, then four `I32`s of which the last two
+  stand in an exact 2:1 ratio in all eight bodies (e.g. 22, 26, 90, 45 / 348, 438, 1 612, 806),
+  then Int32CDP packets. **No semantics are assigned and the body is not decoded** — the element
+  GUID is in no documented figure, which is the condition the brief set for decoding it.
+- **Type 31** — one segment, 341 payload bytes (984 inflated), LZMA. It frames **14 String
+  Property Atom Elements** (Figure 71, Annex A; base type 5, version 2, state flags `0x40000000`)
+  forming seven key/value pairs that name the producing tool chain:
+  `JT_PROP_JTOPENTOOLKIT_BUILD` = 200825C, `JT_PROP_XT_TOOLKIT_VERSION` = 33.0.89,
+  `JT_PROP_JTOPENTOOLKIT_VERSION` = 10.8.0.0, `JT_PROP_DIRECTMODEL_BUILD` = 922218e,
+  `JT_PROP_PARASOLID_VERSION` = 33.0.171, `JT_PROP_DIRECTMODEL_VERSION` = 9.8.0.0,
+  `JT_PROP_BODYSHOP_VERSION` = 33.0.93. **No** late-loaded atom references it; the segment stands
+  alone in the TOC. Its element type is fully documented, but what the *segment type* is for is
+  not, so the payload is preserved verbatim and no typed document is built for it.
+
+### Layer 1 only
+
+No scene-façade change: `readScene` neither reads nor is affected by §8–§10, and `writeJt` emits
+no wireframe, LWPA or precise-geometry segments. Both are recorded deferrals with their conditions.
+
+## §10 / §12 wire format as NX 10.5 writes it (established, with byte evidence from the NIST fixture)
+
+Continuing the delta numbering.
+
+37. **The Arithmetic CODEC's out-of-band data has two wire forms, and Figure 132/135 says which
+    applies: a nested packet when the segment is *not* externally compressed, an `I32` count plus
+    plain values when it is.** Both figures draw the branch ("Segment is externally compressed" /
+    "Segment is not externally compressed"); nothing in the surrounding prose mentions it, and the
+    §7 package never met the compressed side because Shape LOD segments are Table-6
+    non-compressible. Evidence: the Wireframe Rep bodies sit inside LZMA segments and every
+    escape-carrying arithmetic packet in them is followed by a count plus raw `I32`/`I64` values —
+    e.g. the control points' move-to-front offset packet, whose 19-byte context is followed by
+    `12 00 00 00` and 18 plain `I64`s. Reading a nested packet there yields a chopper with 0 chop
+    bits and desynchronizes immediately. This *generalizes* delta 28 rather than replacing it: the
+    presence rule (out-of-band data exists exactly when the context carries an escape entry) holds
+    in both forms — the fixture's escapeless arithmetic packets are followed directly by the next
+    wire field on both sides of the branch. `Int32Cdp.readV10` and `Int64Cdp.read` therefore take
+    the segment's actual compression state, and the model records which form it read
+    (`Int32OutOfBand` / `Int64OutOfBand`) so re-serialization stays a projection.
+38. **Figure 104's Version Number box says `I16`; the field is one byte.** §10.1's own field
+    description says `U8`, and the bytes side with the prose: all five bodies parse to exact length
+    only with one version byte (`01`), and with two the Edge Count misaligns. Recorded as a figure
+    error rather than a version delta, because the v9.5 reference's Figure 130 really does show
+    `I16` — the field narrowed with the generation, exactly as delta 6 describes for the LSG, and
+    the v10 figure was simply not updated.
+39. **Revision B's own errata is the authority on the two index vectors' predictor.** The "What's
+    New" list records: *"Corrections made in Figure 104 — Wireframe Rep Element data collection,
+    Lag1 is replaced by NULL in two places."* Those two places are `MCS Curve Indices` and
+    `Edge Tags`. Verified: under NULL both decode to the identity sequence `0 … n−1` in all five
+    bodies; under Lag1 they would accumulate into nonsense (and the curve indices would leave the
+    `[0, MCS Curve Count)` range the decoder validates). The JT 9 generation does use Lag1.
+40. **Compressed CAD Tag Data writes both tag vectors unconditionally, empty-packet where the type
+    does not occur.** Figure 154's prose says `CAD Tags Type-1` / `Type-2` are "only present if
+    there are Type-1/Type-2 CAD Tags in the CAD Tag Types vector". Evidence: all five wireframe
+    bodies carry only type-1 tags and still write the four zero bytes of an empty Int64 packet —
+    without which `offset(Data Length) + Data Length` overshoots the collection by exactly four
+    bytes (and the element then fails its full-consumption check). Delta 34's Data Length
+    convention is confirmed a second time by the same arithmetic, now on a different segment kind.
+41. **A PMI Manager's CAD tag *count* is not its CAD Tag Index Count.** §11.2.7's formula governs
+    the *index* list (validated since issue #9, exact in all 14 managers); the number of tags in the
+    nested Compressed CAD Tag Data is a different number. Evidence: ten of the fourteen NIST
+    managers carry more tags than indices — twice as many in seven of them (44/22, 72/36, 62/31,
+    112/56, 104/52, 106/53) and other ratios in the rest (87/49, 54/35, 116/64, 135/58) — which
+    matches §12.1.16's own statement that "exactly what CAD entity types have CAD Tags … is defined
+    by users of this data collection". Constraining the tag count would refuse ten perfectly
+    well-formed bodies; the wireframe side, where §10.1.2 *does* fix the count at one tag per edge,
+    keeps its check.
+
+Recorded observations from the same evidence:
+
+- **Annex A omits segment type 30 entirely.** Table 6 defines MultiXT B-Rep and Annex F §F.1.3
+  documents its element and GUID, but Table A.1 has no "Types Stored Within MultiXT B-Rep Segment"
+  block. `ObjectTypeIds.MULTI_XT_BREP_ELEMENT` carries the GUID with that recorded — the same
+  treatment the Vector4f Property Atom got.
+- **The Int64 probability context stores its associated values unsigned relative to Min Value**, as
+  the Int32 context does, even though Figure 137 labels the field `I64{Number Value Bits}`.
+  Evidence: the wireframe control-point contexts use 53–64 value bits with min values that are
+  themselves `F64` bit patterns; read signed, half the entries come out as absurd negative
+  numbers and the decoded coordinates stop being coordinates. Read unsigned + min, all five
+  bodies' control points land inside the model's own extent.
+- **The Int64 bitlength CODEC does not nibble its min/max/mean.** Annex B is explicit for the
+  64-bit specialization — *"Simply write out all the bits for 64 bit"*, `nibblerGet(Int64&)` being
+  a plain `GetUnsignedBits(…, 64)` — and the two bitlength packets of the fixture confirm it.
+- **Every wireframe segment is referenced by `JT_LLPROP_WFREP`** declaring segment type 18, on the
+  five Part Nodes that own section/reference curves; the pairing is asserted per fixture.
+
 ## Fixture conventions (from the amendment on issue #1)
 
 - JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
@@ -981,14 +1197,15 @@ Recorded observations from the same evidence:
 
 | What | Its time comes when |
 |---|---|
-| ~~v10 shape element bodies + v10 Int32CDP wire formats, v10 bitlength/packed-Deering variants~~ | **done** (issue #6, see *Layer 1: v10 shape LOD bodies*): tri-strip + polyline bodies decode typed in v10, all 117 stored hashes verified; Int64CDP (Figures 135–137) stays deferred — no §7 structure needs it, first consumer is B-rep/curve data |
+| ~~v10 shape element bodies + v10 Int32CDP wire formats, v10 bitlength/packed-Deering variants~~ | **done** (issue #6, see *Layer 1: v10 shape LOD bodies*): tri-strip + polyline bodies decode typed in v10, all 117 stored hashes verified |
+| ~~Int64CDP (Figures 135–137)~~ | **done** (issue #10): landed with §10, its first consumer — arithmetic, bitlength and move-to-front fixture-verified on the wireframe bodies; null and chopper spec-derived |
 | XZ SHA-256 block-check verification, non-LZMA2 xz filter chains | first real stream carrying them (today: SHA-256 decodes unverified; foreign filter chains refuse with `UNSUPPORTED_COMPRESSION`) |
 | LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than plain storage permits — note Table 8/9 leave *no other* v10 choice: ZLIB is a JT 9 value, so "stored" is the only legal alternative (issue #1 policy: simplest legal encodings) |
 | Point/Polygon/Primitive Set Shape LOD bodies; Polyline Set in the JT 9 generation | first fixture carrying them (the NIST polylines settled the v10 Polyline layout — issue #6; no fixture shows the others) |
 | Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
 | ~~Element body parsing for meta data / PMI segments~~ | **done** (issue #9, see *Layer 1: Meta data and PMI*): all 44 Meta Data / PMI Data segments of the NIST fixture decode typed, byte-identical round-trip, cross-checked against the LSG's late-loaded references |
 | The undocumented block NX 10.5 writes after a PMI Manager's fonts (delta 33) — and with it Figure 110's segment-level `Property Count` / PMI Properties and Figure 131's Model View Sort Orders | a fixture whose Property Count or Model View Sort Order Count is non-zero, or documentation of the trailing structure (today: carried verbatim with `PMI_MANAGER_TAIL_UNDOCUMENTED`, never read as something it may not be) |
-| The entropy-coded vectors inside Compressed CAD Tag Data (Figure 154) | a consumer needs CAD tags — it needs the Int64 CDP (Figures 135–137) for Type-2 tags, the same deferral the B-rep/curve data waits on; today the framing is decoded and the coded bytes are kept verbatim, their extent pinned by the collection's own Data Length |
+| ~~The entropy-coded vectors inside Compressed CAD Tag Data (Figure 154)~~ | **done** (issue #10): the condition ("a consumer needs CAD tags") was met by §10's Wireframe Rep CAD Tag Data. All 5 wireframe reps and all 14 PMI managers decode their tag vectors; Type-2 (64-bit) tags stay spec-derived — no fixture writes one. Undecodable vectors fall back to verbatim bytes with `CAD_TAG_VECTORS_UNRECOGNIZED` |
 | The v9 PMI Manager layout (v9.5 Figure 136: PMI Version Number, reserved field, per-entity-type collections) | the first v9 fixture carrying a PMI Manager (today: opaque with `ELEMENT_LAYOUT_UNVERIFIED`; the v9 Property Proxy element *does* decode — its v9.5 figure is the v10 layout with an I16 version) |
 | Surfacing meta data properties and PMI into the Layer 2 scene | a consumer needs them *and* a decision is made about which conventions the scene interprets (§13.8's CAD/tessellation/PMI property tables) rather than passing raw key/value bags through a format-agnostic model; today they are complete at Layer 1 |
 | Authoring §11 segments in `writeJt` (property bags, PMI) | the Layer 2 scene grows the concepts — a file without meta data segments is legal, and the writer emits none today (the read side is `done`, so a written file's bags could be verified against it immediately) |
@@ -1001,6 +1218,13 @@ Recorded observations from the same evidence:
 | Writing face groups, per-vertex colours, texture coordinates, PMI, B-rep | the Layer 2 scene grows the concept (face groups are read but the Scene model has no place for them yet) |
 | Per-part units precedence (lowest node wins) for mixed-unit files | first real fixture declaring conflicting units (today: `SCENE_UNITS_MIXED` + `UNSPECIFIED`, never a guess) |
 | Force/final/field-inhibit attribute accumulation in the scene | first real fixture using them (today: named note `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`; both fixtures use plain accumulation) |
+| The **full** NURBS knot vector of a wireframe curve (and of a trivial one at all) | a consumer needs to *evaluate* curves. §12.1.13 prints the interior-filling step of its reconstruction sketch only for the `[x1:x2]` Table-68 categories, and for a **trivial** knot vector it gives only the two defining cases and no reconstruction — so a full vector would be part inference. Today the model exposes the stored values with their category, and validates their count against the formula that *is* printed |
+| Figure 102's Analytic Surface Creation projection (turning LWPA's four `VecF64` arrays into planes, cylinders, cones, spheres and tori) | a consumer needs analytic surfaces — **and** the first fixture carrying an LWPA segment, since the whole §9 decode is spec-derived today |
+| Reading the body of an undefined-type segment (NX 10.5's types 23 and 31) | for **23**: its element GUID appearing in a documented figure, or documentation of the type. For **31**: nothing is blocked — its elements are documented String Property Atoms — but what the *segment type* is for is not, so no typed document claims it. Both are preserved verbatim today, with everything the bytes prove recorded in `UndefinedSegmentTypeTest` |
+| Decoding B-rep (JT B-rep, XT, MultiXT, ULP, STEP) | **a doctrine reversal**, not a package: issue #1 rule 3 makes opacity deliberate, and `BrepOpacityTest` proves it is carriage rather than loss. A reversal belongs to the user and would be recorded here with the old rationale quoted |
+| The JT 9 generation of the Wireframe Rep Element (v9.5 Figure 130: I16 version, Lag1 index vectors, "Mk. 2" CDPs throughout the curve data) | the first v9 fixture carrying a Wireframe segment (today: opaque with `ELEMENT_LAYOUT_UNVERIFIED`) |
+| The UV (parameter-space) dimensionality of Compressed Curve Data (Table 70) | the first consumer of JT B-Rep PCS curves — the decoder already takes it as a parameter, so only the fixture is missing |
+| Surfacing wireframe curves into the Layer 2 scene, and authoring §9/§10 segments in `writeJt` | the Scene model grows a curve concept. Today wireframe polylines *do* reach the scene (they are §7 Polyline Set shapes); §10's precise NURBS curves are complete at Layer 1 |
 | Streaming input (not whole-file `ByteArray`) | first file too large to buffer comfortably |
 | Browser JS target | first browser consumer (ConstructIt seam) |
 | General re-layout on arbitrary mutation | Layer 1 authoring writer (single-segment payload replacement exists: `withSegmentPayload`) |
