@@ -127,6 +127,15 @@ record each new one here the day it burns you):
   (object id, reserved tail) that decodes faithfully into a *different document* with an
   identical projection. Compare the whole decoded document; "identical + no note" is the
   only illegal outcome. (Burned 2026-08-01, ShapeProbeTest.)
+- **Declared counts are consumed counts**: a shape node's Figure 36/37 vertex count range is the
+  *primitive-consumed* vertex count (sum of line/strip lengths), NOT the unique vertex-record
+  count — the NIST producer declares 58 where the segment holds 36 unique records. A probe
+  asserting `records in declaredRange` cries wolf on files the installed base itself writes.
+  Establish count conventions from a real producer's own declarations before asserting them.
+  (Burned 2026-08-01, WriterProbeTest.)
+- **JUnit messages are eager**: `assertTrue(ok, "at byte " + arr.first { bad })` computes the
+  message even when `ok` is true — use the `assertTrue(ok) { ... }` lazy-supplier overload for
+  any message that only makes sense on failure. (Burned 2026-08-01, WriterProbeTest.)
 
 ## 5. The verification gate (before every commit)
 

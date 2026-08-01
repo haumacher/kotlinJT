@@ -583,6 +583,46 @@ fun unpackResiduals(
     return out.toList()
 }
 
+/**
+ * The exact inverse of [unpackResiduals]: turns primal values into the residuals the wire
+ * carries. The writer needs it wherever a field is declared predicted (Figure 92's
+ * `VecI32{Int32CDP, Lag1}` fields, the binary vertex coordinate arrays); `pack` followed by
+ * `unpack` is the identity for every predictor by construction.
+ */
+fun packResiduals(
+    values: List<Int>,
+    predictor: Predictor,
+): List<Int> {
+    if (predictor == Predictor.NONE) return values
+    val out = IntArray(values.size)
+    for (i in values.indices) {
+        if (i < 4) {
+            // The first four values are just primers.
+            out[i] = values[i]
+        } else {
+            val predicted =
+                when (predictor) {
+                    Predictor.LAG1, Predictor.XOR1 -> values[i - 1]
+                    Predictor.LAG2, Predictor.XOR2 -> values[i - 2]
+                    Predictor.STRIDE1 -> values[i - 1] + (values[i - 1] - values[i - 2])
+                    Predictor.STRIDE2 -> values[i - 2] + (values[i - 2] - values[i - 4])
+                    Predictor.STRIP_INDEX -> {
+                        val d = values[i - 2] - values[i - 4]
+                        values[i - 2] + if (d > -8 && d < 8) d else 2
+                    }
+                    Predictor.RAMP -> i
+                    Predictor.NONE -> 0
+                }
+            out[i] =
+                when (predictor) {
+                    Predictor.XOR1, Predictor.XOR2 -> values[i] xor predicted
+                    else -> values[i] - predicted
+                }
+        }
+    }
+    return out.toList()
+}
+
 /** Convenience: reads a JT 9 packet and applies [predictor] to its values. */
 internal fun readInt32CdpValues(
     r: ByteReader,

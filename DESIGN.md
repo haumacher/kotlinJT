@@ -643,6 +643,176 @@ next coarser one *with* its `SCENE_GEOMETRY_UNAVAILABLE` note, so the substituti
 visible. Range-limit-based (eye distance) selection is viewer runtime behavior, not a file
 property.
 
+## Layer 2, write side: `writeJt` (issue #8)
+
+**The API as landed** (`de.haumacher.kotlinjt.write`, platform-free): `writeJt(scene,
+byteOrder = LITTLE_ENDIAN): ByteArray` and `writeJtFile(scene, byteOrder): JtFile` (the same
+image, parsed back — what tests inspect). Refusals are a `JtWriteException` naming the
+offending scene path; nothing is ever written that would read back as a different scene.
+Output is **deterministic** — identical scenes produce identical bytes, which is what makes
+golden pinning possible; segment GUIDs are therefore minted from a per-file index plus a
+`kotlinJT` marker instead of randomly.
+
+### Version and codec choices (the "one version, simplest encodings" policy of issue #1)
+
+- **Version string `"Version 10.0 JT kotlinJT"`**, padded per Figure 11 with the five
+  ASCII/binary translation-detection bytes. The 10.0 wire is what the reference blesses; the
+  10.5 deltas 23–26 are read but never written.
+- **No segment-wide compression.** The brief for this package suggested "ZLIB (flag 2) or
+  uncompressed" — but Table 8/Table 9 of the v10 reference define *only* flag 3 / algorithm 3
+  (LZMA) and algorithm 1 (none); ZLIB is a JT 9 generation value with no v10 encoding at all.
+  With the LZMA *encoder* still deferred, the only legal v10 choice is storing plainly
+  (flag 0, algorithm 1), which is what `encodeLsgSegmentPayload` already emitted. Shape LOD
+  segments are not compressible by Table 6 and carry no compression fields.
+- **Null CODEC (Table 64 value 0) for every Int32CDP**: value count, codec byte, CodeText
+  length `32·n`, then the values as plain 32-bit words. Predicted fields (Figure 92's
+  `Lag1` fields, the binary coordinate arrays) store residuals produced by `packResiduals`,
+  the exact inverse of the reader's `unpackResiduals`.
+- **Lossless vertex arrays**: zero quantization bits everywhere, raw float bits per component
+  (Lag1 for coordinates, NULL for normals — deltas 29/30), per-component-array hashes. Nothing
+  the writer emits is lossy, so coordinates and normals come back bit-exact.
+- Both byte orders are supported and tested; little-endian is the default, as in the installed
+  base.
+
+### The shape representation: why triangles must use the topology coder, and which topology
+
+§7.1.4.1.2.2 settles the question the brief asked to establish from the spec: TopoMesh
+Compressed Rep Data (the cheap face-group/primitive/vertex index lists) "is used when the shape
+type is Polyline Set Shape Node Element, or Point Set Shape Node Element. For Tri-Strip Set
+Shape Node Element and Polygon Set Shape Node Element, please refer to Topologically Compressed
+Rep Data" — and Figure 85 branches on exactly that. **There is no simpler legal representation
+of triangles in JT 10**; the dual-mesh topology coder is mandatory. (Polylines do take the
+cheap path, which is what the writer emits for them.)
+
+Implementing the Annex D *encoder* means mirroring the decoder's traversal, its active-face
+queue heuristic, its split faces and its boundary cover faces exactly — and renumbering every
+vertex into visit order. Instead the writer emits the simplest topology the coder can express:
+**one connected component per triangle, closed by a single cover face** (the mirror of the
+triangle). §7.1.4.1.3.1 documents that mechanism itself — the Vertex Flags array "contains a
+value of 0 when the dual face was present in the original triangle mesh, and a value of 1 if the
+dual face is a cover face that was added to artificially close the original mesh" — and every
+conforming reader drops those faces again. Each component is therefore a closed 2-manifold, the
+invariant the coder is built around, and the decoded result is exactly the triangles the writer
+was given, in the given order and winding.
+
+Per triangle the streams are (verified against the decoder, `WriteJtTest`):
+valences `[3, 3]`; groups `[0, 0]` (the Layer 2 scene carries no face groups); flags `[0, 1]`
+(Lag1 residuals on the wire); face degrees `[2]` in context 1 and `[2, 2]` in context 0 (the
+Annex D context rule keyed on valence and known ring degree); three attribute masks in context 0
+(degree 2 → mask context 0), each `1` when the mesh binds normals and `0` when it does not; no
+split faces, no high-degree masks, no 8th-context MSB words. The vertex records then carry three
+coordinates and (with normals) three normal records per triangle, in the same order.
+
+**The cost, recorded honestly**: vertices are not shared between triangles, so a mesh stores
+three coordinates per triangle instead of roughly half a coordinate, and the null CODEC adds no
+entropy coding at all. Measured: the unit cube (12 triangles, one material) is **2 995 bytes**;
+the NIST 10.5 fixture (1.62 MB, LZMA + quantized coordinates + a real topology coder) rewrites
+to **6.07 MB** at `FINEST_ONLY` and **11.1 MB** with all three LOD tiers; the 9.5 fixture
+(48 KB) rewrites to 687 KB. Correct and boring, as the policy demands — a vertex-sharing
+Annex D encoder is a named future extension (see the deferral table), and so is the LZMA
+encoder.
+
+**Consequence for scene equality**: a re-read mesh has per-corner `positions`/`normals` arrays,
+i.e. the same geometry with a different indexing. The acceptance therefore compares *resolved*
+geometry — per triangle, in order, the three corner positions and normals as values — which is
+what `assertSceneEquivalent` does (it also uses a small float tolerance, because on Kotlin/JS a
+`Float` literal is only narrowed once it passes through the wire).
+
+### The material inverse (`readScene`'s mapping, run backwards)
+
+The read side maps JT Phong → scene PBR as `baseColor = diffuse colour + alpha`,
+`roughness = sqrt(2 / (2 + shininess))`, `metallic = 0`. The writer inverts exactly that:
+
+- `Diffuse Colour and Alpha` = `baseColor` (RGB and alpha verbatim),
+- `Shininess` = **`2 / roughness² − 2`**, with the roughness first clamped to
+  `[sqrt(2/130), 1]` so the exponent lands in `[0, 128]` (roughness 0 would demand an infinite
+  exponent; 128 is the range Phong exponents are written in),
+- `Ambient Colour` = the base colour's RGB with alpha 1, `Specular Colour` = 0.35 grey (what the
+  installed base pairs with a diffuse material), `Emission` = black, `Reflectivity` = 0,
+  `Bumpiness` = 1,
+- `Data Flags` = 0 (Table 18: blending off, no vertex-colour override, zero blend factors),
+  Base Attribute Data `stateFlags` = 8 (persistable only — what all 213 attribute elements of
+  both fixtures carry), no inhibited or final fields,
+- `metallic` is **not** encoded: classic JT materials have no metalness concept, and inventing
+  one would be a guess in the opposite direction of the read-side decision.
+
+The round trip is therefore exact in the scene's terms (`roughness → shininess → roughness`
+agrees to well under 1e-5 for every value the fixtures and tests carry) while everything JT
+knows and the scene does not (ambient, specular, emission, reflectivity, bumpiness) is written
+as a conventional value rather than pretended to be recovered.
+
+### Units: refusal, not a default
+
+Writing a scene whose `units` are `UNSPECIFIED` **fails** with a `JtWriteException` naming
+`JT_PROP_MEASUREMENT_UNITS`. Units are explicit in this model by doctrine (issue #1 rule 4): a
+writer that silently picked millimeters would make every consumer's scale a guess. The value is
+written capitalized (`"Millimeters"`), matching both fixtures and the spec's own note that
+producers do so and readers must accept either case; it sits on the partition node, where
+`readScene` finds it.
+
+### What the writer refuses, and why it is a read-side question
+
+`readScene` *collapses* structure (pass-through children are spliced out, a sole unnamed
+transform-free child is absorbed into its parent, geometry lands on named part nodes). Two scene
+shapes therefore have no faithful pre-image, and the writer refuses them by naming the path
+instead of writing a file that reads back differently:
+
+1. a node carrying **geometry and children** — the collapse only ever puts geometry on a node
+   whose children it absorbed, so re-reading would hang the geometry on an extra unnamed child;
+2. a child the collapse would remove: **unnamed + identity transform + no material + no
+   geometry** (spliced out), or a **sole** unnamed identity-transform child (absorbed).
+
+Both are checks against `readScene`'s exact rules, not conservative guesses. Lifting them is a
+Layer 2 *read-side* extension (a rule that hoists a geometry-only child onto its parent), so
+they are recorded as a deferral rather than worked around in the writer.
+
+### The LSG the writer emits
+
+Partition node (root: name atom, units property, the scene root's transform/material, world
+bounding box, summed vertex/polygon counts and surface area, `partitionFlags = 0` with no
+untransformed box — the simplest legal form of Figure 23 — and an empty file name) → per scene
+child either its definition directly or, when the scene shares a node by identity, an
+**Instance Node** per reference (Figure 27; carrying no attributes, it is transparent to
+`readScene`'s walk, so the shared node comes back as one shared scene object — the NIST hex nut's
+ten placements round-trip as ten instances of one part). A node with children becomes a Group
+Node; a node with geometry becomes a Part Node → Range LOD Node (empty range limits and centre,
+as NX writes them) → one child per LOD tier, finest first: the tier's Tri-Strip Set Shape Node
+and/or Polyline Set Shape Node, wrapped in a Group Node only when a tier holds both. Each shape
+node declares its own bounding box, exact vertex/polygon count ranges — where "vertex count" is
+the **primitive-consumed** count (sum of line lengths for polylines, strip-consumed vertices for
+tri-strips), not the unique record count: the NIST producer's own polyline nodes declare 58 where
+the segment holds 36 unique records and the line-vertex sum is 58, so Figure 37's "count that can
+be achieved" means vertices the primitives consume — and its surface area (its
+Figure 36 `Size` stays 0 — the field is the element's *in-memory* size, which the spec says is
+unrelated to the on-disk size, and 0 is its documented "unknown"), and points at its Shape LOD
+segment through a Late Loaded Property Atom
+keyed `JT_LLPROP_SHAPEIMPL` with segment type `7 + tier` (Table 6: LOD0…LOD9, so more than ten
+tiers is refused). Names are written as plain `JT_PROP_NAME` strings — the encoded
+`Name;version;instance:` form is *read* but not synthesized, and plain values pass the reader's
+regex through verbatim. Key and value atoms are interned, as producers do.
+
+### Acceptance (what is committed)
+
+`WriteJtTest` (commonTest — runs on JVM *and* JS): the unit cube, a two-part assembly with a
+shared instanced part, materials, transforms and millimeter units, multi-tier LODs, a polyline
+part, a mesh without normals, a structure-only scene, both byte orders, determinism, the header
+and TOC layouts, the authored topology inspected at Layer 1, and every refusal. Every case
+asserts the Layer 0/1 standards on the written file: parses with **zero notes**, re-serializes
+**byte-identically**, and its shape bodies decode typed (which is what proves the stored hashes).
+`WriteFixtureRewriteTest` (jvmTest) does the same for every *discovered* fixture — both tiers,
+both LOD policies: `readScene(writeJt(readScene(f)))` equals `readScene(f)`, including the
+instancing structure (identical path sets), with a segment-count inventory check
+(1 + one shape segment per mesh/polyline tier).
+
+### Golden candidates, not goldens
+
+`GoldenCandidateWriterTest` stages `golden-candidates/` (gitignored except its README): the
+synthetic scenes plus a rewrite of every discovered fixture at both LOD policies, each with an
+inventory dump. Per the fixture-policy amendment on issue #1 these freeze as committed goldens
+only after an external consumer (JT2Go) opens them — the README lists exactly what to check,
+including the cover-face question, since a reader that ignored the Vertex Flags convention would
+show doubled inward-facing triangles.
+
 ## Fixture conventions (from the amendment on issue #1)
 
 - JVM-only `FixtureDiscoveryTest` auto-discovers `*.jt` in **both tiers** — the committed
@@ -668,13 +838,17 @@ property.
 |---|---|
 | ~~v10 shape element bodies + v10 Int32CDP wire formats, v10 bitlength/packed-Deering variants~~ | **done** (issue #6, see *Layer 1: v10 shape LOD bodies*): tri-strip + polyline bodies decode typed in v10, all 117 stored hashes verified; Int64CDP (Figures 135–137) stays deferred — no §7 structure needs it, first consumer is B-rep/curve data |
 | XZ SHA-256 block-check verification, non-LZMA2 xz filter chains | first real stream carrying them (today: SHA-256 decodes unverified; foreign filter chains refuse with `UNSUPPORTED_COMPRESSION`) |
-| LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than stored/ZLIB permits (issue #1 policy: simplest legal encodings) |
+| LZMA *encoder* (writer-side segment compression) | a consumer needs v10-writer output smaller than plain storage permits — note Table 8/9 leave *no other* v10 choice: ZLIB is a JT 9 value, so "stored" is the only legal alternative (issue #1 policy: simplest legal encodings) |
 | Point/Polygon/Primitive Set Shape LOD bodies; Polyline Set in the JT 9 generation | first fixture carrying them (the NIST polylines settled the v10 Polyline layout — issue #6; no fixture shows the others) |
 | Vertex colours, texture coordinates and auxiliary fields in vertex records | first fixture whose bindings declare them (typed decode refuses with a named note today; per-vertex *flags* landed with issue #6 — Table 48 bit 7, all NIST tri-strips) |
 | Element body parsing for meta data / PMI segments | the §11 package (LSG done issue #3, shape LOD done issue #4) |
 | v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |
 | ~~Property-table *semantics* (units, key naming conventions, §13.8)~~ | **done** (issue #7, see *Layer 2, read side*): JT_PROP_NAME, JT_PROP_MEASUREMENT_UNITS, key visibility convention, late-loaded shape resolution; other conventions (SUBNODE/reference sets, CAD/tessellation properties) stay raw at Layer 1 — their time comes with the first consumer that needs them interpreted |
-| `writeJt(scene)` — Layer 2 write side | the next milestone-2 package (issue #1: scene → tessellation + structure + names + materials; JT2Go opens the result) |
+| ~~`writeJt(scene)` — Layer 2 write side~~ | **done** (issue #8, see *Layer 2, write side*): scene → LSG + shape LOD segments, round-trip-verified on both fixtures; what remains is the external validation (JT2Go opening the staged candidates) before any of it freezes as a golden |
+| Vertex-sharing tri-strip topology (a real Annex D encoder) | file size or a consumer demands it: today one component per triangle costs three coordinates per triangle (NIST rewrite 6.1 MB vs. the original 1.6 MB) and no entropy coding at all — correct and boring by policy |
+| Entropy-coded Int32CDPs on the write side (bitlength/arithmetic/chopper/MTF) | a consumer needs smaller files than the null CODEC produces; the decoders exist, so an encoder can be validated against them |
+| Writing a scene node that carries geometry *and* children, or a child the Layer 2 collapse would splice out/absorb | a read-side rule that hoists a geometry-only child onto its parent (today: a named `JtWriteException`, never a file that reads back differently) |
+| Writing face groups, per-vertex colours, texture coordinates, PMI, B-rep | the Layer 2 scene grows the concept (face groups are read but the Scene model has no place for them yet) |
 | Per-part units precedence (lowest node wins) for mixed-unit files | first real fixture declaring conflicting units (today: `SCENE_UNITS_MIXED` + `UNSPECIFIED`, never a guess) |
 | Force/final/field-inhibit attribute accumulation in the scene | first real fixture using them (today: named note `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`; both fixtures use plain accumulation) |
 | Streaming input (not whole-file `ByteArray`) | first file too large to buffer comfortably |

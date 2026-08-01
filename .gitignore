@@ -13,6 +13,10 @@ build/
 fixtures-local/*
 !fixtures-local/README.md
 
+# Writer output awaiting external (JT2Go) validation: candidates, not goldens.
+golden-candidates/*
+!golden-candidates/README.md
+
 # Kotlin/JS
 .kotlin/
 node_modules/

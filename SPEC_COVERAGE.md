@@ -25,6 +25,12 @@ are tracked at section granularity with behavioral tests.
    recorded in the Notes column and in DESIGN.md.
 4. The writer targets v10 with the simplest legal encodings — for many codec figures the honest
    final state is Read `done` / Write `n/a: writer emits the simple encoding`.
+5. The Write column's `done` means the layout is **serialized** — which for most figures started
+   out as byte-faithful re-serialization of a decoded model. Where the Layer 2 writer
+   (`writeJt`, issue #8) additionally **authors** a figure from a scene, with no decoded original
+   to project, the Notes column says so explicitly (*"Write: authored by `writeJt`"*). Figures the
+   writer never emits keep their re-serialization status — that distinction is the point of the
+   note.
 
 
 ## §1 Intellectual Property License Terms
@@ -55,25 +61,25 @@ are tracked at section granularity with behavioral tests.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| File Format (p.18) | done | done | SyntheticFileRoundTripTest, FixtureDiscoveryTest, Layer0ProbeTest | chapter row; Write = byte-faithful re-serialization (authoring writer is milestone 2) |
-| File Structure (p.18) | done | done | SyntheticFileRoundTripTest | region model: segments + TOC + preserved gaps cover the file |
-| File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) |
-| TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) |
-| Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful |
+| File Format (p.18) | done | done | SyntheticFileRoundTripTest, FixtureDiscoveryTest, Layer0ProbeTest, WriteJtTest | chapter row; Write = byte-faithful re-serialization *and* authoring: `writeJt` mints header, segments and TOC from a scene (issue #8) |
+| File Structure (p.18) | done | done | SyntheticFileRoundTripTest | region model: segments + TOC + preserved gaps cover the file | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| File Header (p.18) | done | done | FileHeaderTest | v9 delta: I32 TOC offset, no trailing GUID (DESIGN.md, fixture-verified) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| TOC Segment (p.20) | done | done | TocTest | v9 delta: 28-byte entries vs v10 32-byte (DESIGN.md) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Data Segment (p.21) | done | done | SyntheticFileRoundTripTest, HostileInputTest | hostile variants produce named notes, stay byte-faithful | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Data Segments (p.26) | partial | partial | ElementScanTest, LsgDocumentTest, ShapeLodDocumentTest | framing scanned everywhere (incl. the 59 LZMA-inflated NIST streams); LSG element bodies decoded (§6, issue #3; v10.5 cross-producer via issue #5); shape LOD bodies decoded in both generations (§7 — JT 9 via issue #4, v10 via issue #6); meta data / PMI bodies stay opaque until the §11 package |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 10 — JT File Structure (p.18) | done | done | SyntheticFileRoundTripTest | |
-| Fig. 11 — File Header data collection (p.19) | done | done | FileHeaderTest | v9: I32 TOC offset @85; verified against real 9.5 fixture |
-| Fig. 12 — TOC Segment data collection (p.20) | done | done | TocTest | |
-| Fig. 13 — TOC Entry data collection (p.21) | done | done | TocTest | v9 28-byte / v10 32-byte entry |
-| Fig. 14 — Data Segment data collection (p.22) | done | done | SyntheticFileRoundTripTest | |
-| Fig. 15 — Segment Header data collection (p.22) | done | done | SyntheticFileRoundTripTest, HostileInputTest | id/type/length mismatches → named notes |
-| Fig. 16 — Data collection (p.24) | done | done | ZlibTest, SyntheticFileRoundTripTest | ZLIB (v9) and LZMA flag 3/algorithm 3 (v10.5 NIST, 59 segments) fixture-verified; flag∉{2,3} layout spec-derived, unverified against a real file — note fallback in place |
-| Fig. 17 — Logical Element Header data collection (p.24) | done | done | ElementScanTest | |
-| Fig. 18 — Element Header data collection (p.24) | done | done | ElementScanTest | |
-| Fig. 19 — Logical Element Header Compressed data collection (p.25) | done | done | ElementScanTest, FixtureDiscoveryTest | scanned in inflated LSG of the real fixture (67 elements) |
+| Fig. 10 — JT File Structure (p.18) | done | done | SyntheticFileRoundTripTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 11 — File Header data collection (p.19) | done | done | FileHeaderTest | v9: I32 TOC offset @85; verified against real 9.5 fixture | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 12 — TOC Segment data collection (p.20) | done | done | TocTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 13 — TOC Entry data collection (p.21) | done | done | TocTest | v9 28-byte / v10 32-byte entry | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 14 — Data Segment data collection (p.22) | done | done | SyntheticFileRoundTripTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 15 — Segment Header data collection (p.22) | done | done | SyntheticFileRoundTripTest, HostileInputTest | id/type/length mismatches → named notes | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 16 — Data collection (p.24) | done | done | ZlibTest, SyntheticFileRoundTripTest | ZLIB (v9) and LZMA flag 3/algorithm 3 (v10.5 NIST, 59 segments) fixture-verified; flag∉{2,3} layout spec-derived, unverified against a real file — note fallback in place | **Write: authored by `writeJt`** — Table 8/9 leave only LZMA and "none" in v10, so the writer stores plainly (flag 0, algorithm 1); WriteJtTest.writtenLsgSegmentIsStoredNotCompressed.
+| Fig. 17 — Logical Element Header data collection (p.24) | done | done | ElementScanTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 18 — Element Header data collection (p.24) | done | done | ElementScanTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 19 — Logical Element Header Compressed data collection (p.25) | done | done | ElementScanTest, FixtureDiscoveryTest | scanned in inflated LSG of the real fixture (67 elements) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 
 
 ## §6 LSG Segment
@@ -84,55 +90,58 @@ opaque-with-note (`ELEMENT_LAYOUT_UNVERIFIED`) in v9 files. Since issue #5 a thi
 generation exists: **JT 10.5** deviates from the v10.0 reference in deltas 23–26
 (DESIGN.md), established against the NIST fixture's LSG — 1 211 elements, all typed,
 stream round-trip byte-identical, cross-producer coherence probes green (LsgProbeTest). Write = re-serialization of the
-typed model, byte-identical to the decoded stream (authoring writer is milestone 2).
+typed model, byte-identical to the decoded stream — plus, since issue #8, **authoring**: the
+element types marked below are constructed from a Layer 2 scene by `writeJt` (partition, group,
+instance, part, range LOD, tri-strip and polyline shape nodes, material and geometric transform
+attributes, string and late-loaded property atoms, the property table).
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| LSG Segment (p.28) | done | done | LsgDocumentTest, LsgSyntheticFileTest, FixtureDiscoveryTest | v9 fixture: 66 graph elements + 41 atoms + 40-entry property table; NIST 10.5: 267 graph elements + 944 atoms + 135-entry property table — all typed in both, stream round-trip byte-identical |
-| Graph Elements (p.28) | done | done | LsgNodeElementCodecTest, LsgAttributeElementCodecTest | unknown/undecodable elements → opaque + named note (LsgDocumentTest) |
-| Node Elements (p.29) | done | done | LsgNodeElementCodecTest | v9 deltas 6–9 in DESIGN.md, fixture-verified |
-| Attribute Elements (p.49) | done | done | LsgAttributeElementCodecTest, Lsg105GenerationTest | v10 complete; 10.5 trailing I32 on the family (delta 24 — fixture-verified for material/transform/linestyle, family-rule-derived for the rest); v9: material only — others opaque-by-policy with note |
-| Property Atom Elements (p.83) | done | done | LsgPropertyCodecTest | both generations |
+| LSG Segment (p.28) | done | done | LsgDocumentTest, LsgSyntheticFileTest, FixtureDiscoveryTest | v9 fixture: 66 graph elements + 41 atoms + 40-entry property table; NIST 10.5: 267 graph elements + 944 atoms + 135-entry property table — all typed in both, stream round-trip byte-identical | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Graph Elements (p.28) | done | done | LsgNodeElementCodecTest, LsgAttributeElementCodecTest | unknown/undecodable elements → opaque + named note (LsgDocumentTest) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Node Elements (p.29) | done | done | LsgNodeElementCodecTest | v9 deltas 6–9 in DESIGN.md, fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Attribute Elements (p.49) | done | done | LsgAttributeElementCodecTest, Lsg105GenerationTest | v10 complete; 10.5 trailing I32 on the family (delta 24 — fixture-verified for material/transform/linestyle, family-rule-derived for the rest); v9: material only — others opaque-by-policy with note | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Property Atom Elements (p.83) | done | done | LsgPropertyCodecTest | both generations | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Base Property Atom Element (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | |
-| String Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (28 in the real file) |
+| String Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (28 in the real file) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Integer Property Atom Element (p.84) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | fixture-verified (NIST 10.5: 17 atoms) |
 | Floating Point Property Atom Element (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | fixture-verified (NIST 10.5: 13 atoms) |
 | JT Object Reference Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified; base type 6 (Table 7) |
 | Date Property Atom Element (p.86) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified both generations; 10.5 appends an undocumented F32 (delta 26) |
-| Late Loaded Property Atom Element (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified (v9: 12, NIST 10.5: 105 references); 10.5 drops the Reserved I32 (delta 25) |
+| Late Loaded Property Atom Element (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified (v9: 12, NIST 10.5: 105 references); 10.5 drops the Reserved I32 (delta 25) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Vector4f Property Atom Element (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | GUID missing from Table A.1 (spec inconsistency, recorded in ObjectTypeIds) |
-| Property Table (p.90) | done | done | LsgDocumentTest, FixtureDiscoveryTest | fixture: 40 element tables, zero leftover bytes |
-| Element Property Table (p.91) | done | done | LsgDocumentTest | |
+| Property Table (p.90) | done | done | LsgDocumentTest, FixtureDiscoveryTest | fixture: 40 element tables, zero leftover bytes | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Element Property Table (p.91) | done | done | LsgDocumentTest | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 20 — LSG Segment data collection (p.28) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | figure's 2nd list box garbled in the PDF; fixture confirms property atoms |
+| Fig. 20 — LSG Segment data collection (p.28) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | figure's 2nd list box garbled in the PDF; fixture confirms property atoms | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 21 — Base Node Element data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | spec-derived, not yet fixture-verified |
-| Fig. 22 — Base Node Data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | fixture-verified (all 66 graph elements) |
-| Fig. 23 — Partition Node Element data collection (p.31) | done | done | LsgNodeElementCodecTest.partitionNodeElement, Lsg105GenerationTest.partitionBitZeroWithoutStoredBoxDecodes | fixture-verified incl. flag-bit-0 conditional box; 10.5: inserted version byte, bit 0 set without the box (delta 23) |
-| Fig. 24 — Vertex Count Range data collection (p.32) | done | done | LsgNodeElementCodecTest.partitionNodeElement | |
-| Fig. 25 — Group Node Element data collection (p.33) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
-| Fig. 26 — Group Node Data collection (p.34) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified |
-| Fig. 27 — Instance Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.instanceNodeElement | fixture-verified |
-| Fig. 28 — Part Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.partNodeElement | fixture-verified |
+| Fig. 22 — Base Node Data collection (p.29) | done | done | LsgNodeElementCodecTest.baseNodeElement | fixture-verified (all 66 graph elements) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 23 — Partition Node Element data collection (p.31) | done | done | LsgNodeElementCodecTest.partitionNodeElement, Lsg105GenerationTest.partitionBitZeroWithoutStoredBoxDecodes | fixture-verified incl. flag-bit-0 conditional box; 10.5: inserted version byte, bit 0 set without the box (delta 23) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 24 — Vertex Count Range data collection (p.32) | done | done | LsgNodeElementCodecTest.partitionNodeElement | | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 25 — Group Node Element data collection (p.33) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 26 — Group Node Data collection (p.34) | done | done | LsgNodeElementCodecTest.groupNodeElement | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 27 — Instance Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.instanceNodeElement | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 28 — Part Node Element data collection (p.35) | done | done | LsgNodeElementCodecTest.partNodeElement | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 29 — Meta Data Node Element data collection (p.36) | done | done | LsgNodeElementCodecTest.metaDataNodeElement | fixture-verified |
-| Fig. 30 — Meta Data Node Data collection (p.36) | done | done | LsgNodeElementCodecTest.metaDataNodeElement | fixture-verified |
+| Fig. 30 — Meta Data Node Data collection (p.36) | done | done | LsgNodeElementCodecTest.metaDataNodeElement | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 31 — LOD Node Element data collection (p.37) | done | done | LsgNodeElementCodecTest.lodNodeElement | spec-derived; v9 reserved fields fixture-verified via Range LOD |
-| Fig. 32 — LOD Node Data collection (p.37) | done | done | LsgNodeElementCodecTest.lodNodeElement | v9 delta 7 in DESIGN.md |
-| Fig. 33 — Range LOD Node Element data collection (p.38) | done | done | LsgNodeElementCodecTest.rangeLodNodeElement | fixture-verified (12 in the real file) |
+| Fig. 32 — LOD Node Data collection (p.37) | done | done | LsgNodeElementCodecTest.lodNodeElement | v9 delta 7 in DESIGN.md | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 33 — Range LOD Node Element data collection (p.38) | done | done | LsgNodeElementCodecTest.rangeLodNodeElement | fixture-verified (12 in the real file) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 34 — Switch Node Element data collection (p.39) | done | done | LsgNodeElementCodecTest.switchNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 35 — Base Shape Node Element data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | spec-derived, not yet fixture-verified |
-| Fig. 36 — Base Shape Data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | fixture-verified via tri-strip nodes; v9 delta 8 |
+| Fig. 36 — Base Shape Data collection (p.40) | done | done | LsgNodeElementCodecTest.baseShapeNodeElement | fixture-verified via tri-strip nodes; v9 delta 8 | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 38 — Vertex Shape Node Element data collection (p.42) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement | spec-derived, not yet fixture-verified |
-| Fig. 39 — Vertex Shape Data collection (p.43) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement, .triStripSetShapeNodeElement | fixture-verified by consumption; v9 delta 9 and its evidence limit |
-| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | done | done | LsgNodeElementCodecTest.polylineSetShapeNodeElement | fixture-verified (NIST 10.5: 15 nodes) |
+| Fig. 39 — Vertex Shape Data collection (p.43) | done | done | LsgNodeElementCodecTest.vertexShapeNodeElement, .triStripSetShapeNodeElement | fixture-verified by consumption; v9 delta 9 and its evidence limit | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 40 — Polyline Set Shape Node Element data collection (p.44) | done | done | LsgNodeElementCodecTest.polylineSetShapeNodeElement | fixture-verified (NIST 10.5: 15 nodes) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 41 — Point Set Shape Node Element data collection (p.45) | done | done | LsgNodeElementCodecTest.pointSetShapeNodeElement | spec-derived; the version==1 conditional binding treated as v10-only |
 | Fig. 42 — Polygon Set Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.polygonSetShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 43 — NULL Shape Node Element data collection (p.46) | done | done | LsgNodeElementCodecTest.nullShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 44 — Primitive Set Shape Node Element data collection (p.47) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
 | Fig. 45 — Primitive Set Quantization Parameters data collection (p.48) | done | done | LsgNodeElementCodecTest.primitiveSetShapeNodeElement | spec-derived, not yet fixture-verified |
-| Fig. 46 — Base Attribute Data collection (p.49) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest | v9 delta 10: no field-final flags, fixture-verified; 10.5: attribute elements gain a trailing I32 (delta 24, NIST: 88 elements) |
-| Fig. 47 — Material Attribute Element data collection (p.51) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest.materialAttributeCarriesTheTrailingField | fixture-verified all three generations (NIST 10.5: 37 elements); v9 delta 11, 10.5 delta 24 |
+| Fig. 46 — Base Attribute Data collection (p.49) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest | v9 delta 10: no field-final flags, fixture-verified; 10.5: attribute elements gain a trailing I32 (delta 24, NIST: 88 elements) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 47 — Material Attribute Element data collection (p.51) | done | done | LsgAttributeElementCodecTest.materialAttributeElement, .materialAttributeElementV9, Lsg105GenerationTest.materialAttributeCarriesTheTrailingField | fixture-verified all three generations (NIST 10.5: 37 elements); v9 delta 11, 10.5 delta 24 | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 48 — Texture Image Attribute Element data collection (p.54) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 49 — Texture Vers-1 Data collection (p.55) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal, .textureImageAttributeElementInline | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 50 — Texture Environment data collection (p.58) | done | done | LsgAttributeElementCodecTest.textureImageAttributeElementExternal | v10 only; spec-derived, not yet fixture-verified |
@@ -148,23 +157,23 @@ typed model, byte-identical to the decoded stream (authoring writer is milestone
 | Fig. 60 — Attenuation Coefficients data collection (p.73) | done | done | LsgAttributeElementCodecTest.pointLightAttributeElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 61 — Linestyle Attribute Element data collection (p.74) | done | done | LsgAttributeElementCodecTest.linestyleAttributeElement, Lsg105GenerationTest.linestyleCarriesTheTrailingField | v10.5 fixture-verified (NIST: 15 elements, delta 24); v9 layout not established |
 | Fig. 62 — Pointstyle Attribute Element data collection (p.75) | done | done | LsgAttributeElementCodecTest.pointstyleAttributeElement | v10 only; spec-derived, not yet fixture-verified |
-| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | done | done | LsgAttributeElementCodecTest.geometricTransformAttributeElement, Lsg105GenerationTest.geometricTransformCarriesTheTrailingField | sparse mask-driven storage, full matrix in the model; v10.5 fixture-verified (NIST: 36 elements, delta 24) |
+| Fig. 63 — Geometric Transform Attribute Element data collection (p.76) | done | done | LsgAttributeElementCodecTest.geometricTransformAttributeElement, Lsg105GenerationTest.geometricTransformCarriesTheTrailingField | sparse mask-driven storage, full matrix in the model; v10.5 fixture-verified (NIST: 36 elements, delta 24) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 64 — Texture Coordinate Generator Attribute Element data collection (p.78) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | nested mapping-surface element; alien surface stays lossless (LsgDocumentTest) |
 | Fig. 65 — Mapping Plane Element data collection (p.79) | done | done | LsgAttributeElementCodecTest.textureCoordinateGeneratorWithMappingPlane | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 66 — Mapping Cylinder Element data collection (p.80) | done | done | LsgAttributeElementCodecTest.mappingCylinderElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 67 — Mapping Sphere Element data collection (p.81) | done | done | LsgAttributeElementCodecTest.mappingSphereElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 68 — Mapping TriPlanar Element data collection (p.82) | done | done | LsgAttributeElementCodecTest.mappingTriPlanarElement | v10 only; spec-derived, not yet fixture-verified |
 | Fig. 69 — Base Property Atom Element data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | spec-derived, not yet fixture-verified |
-| Fig. 70 — Base Property Atom Data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | fixture-verified (all 41 atoms) |
-| Fig. 71 — String Property Atom Element data collection (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (v9: 28, NIST 10.5: 796) |
+| Fig. 70 — Base Property Atom Data collection (p.83) | done | done | LsgPropertyCodecTest.basePropertyAtomElement | fixture-verified (all 41 atoms) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 71 — String Property Atom Element data collection (p.84) | done | done | LsgPropertyCodecTest.stringPropertyAtomElement | fixture-verified (v9: 28, NIST 10.5: 796) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 72 — Integer Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.integerPropertyAtomElement | fixture-verified (NIST 10.5) |
 | Fig. 73 — Floating Point Property Atom Element data collection (p.85) | done | done | LsgPropertyCodecTest.floatingPointPropertyAtomElement | fixture-verified (NIST 10.5) |
 | Fig. 74 — JT Object Reference Property Atom Element data collection (p.86) | done | done | LsgPropertyCodecTest.jtObjectReferencePropertyAtomElement | spec-derived, not yet fixture-verified |
 | Fig. 75 — Date Property Atom Element data collection (p.87) | done | done | LsgPropertyCodecTest.datePropertyAtomElement | fixture-verified; 10.5 delta 26 (trailing F32, NIST: −4.0 ≙ the timestamps' UTC offset) |
-| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified; 10.5 drops the "always ≥ 1" Reserved I32 (delta 25) |
+| Fig. 76 — Late Loaded Property Atom Element data collection (p.88) | done | done | LsgPropertyCodecTest.lateLoadedPropertyAtomElement | fixture-verified; 10.5 drops the "always ≥ 1" Reserved I32 (delta 25) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 77 — Vector4f Property Atom Element data collection (p.89) | done | done | LsgPropertyCodecTest.vector4fPropertyAtomElement | spec-derived, not yet fixture-verified |
-| Fig. 78 — Property Table data collection (p.90) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified (v9: 40 tables, NIST 10.5: 135); also identifies the shape segments' 6-byte tail (DESIGN.md) |
-| Fig. 79 — Element Property Table data collection (p.91) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified |
+| Fig. 78 — Property Table data collection (p.90) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified (v9: 40 tables, NIST 10.5: 135); also identifies the shape segments' 6-byte tail (DESIGN.md) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 79 — Element Property Table data collection (p.91) | done | done | LsgDocumentTest.wellFormedDocumentDecodesAndRoundTrips | fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 
 
 ## §7 Shape LOD Segment
@@ -174,15 +183,17 @@ Both wire generations are implemented and fixture-verified where a fixture exist
 generation** against the NIST 10.5 file's 39 bodies — 24 tri-strip + 15 polyline, all 117
 stored hashes verified at decode (issue #6, DESIGN.md deltas 27–31). Types without any
 fixture (point/polygon/primitive set; polyline in JT 9) stay opaque-with-note — never
-guessed. Write = byte-identical re-serialization of the typed model (authoring writer is
-milestone 2).
+guessed. Write = byte-identical re-serialization of the typed model — plus, since issue #8,
+**authoring** of the v10 tri-strip and polyline bodies from a Layer 2 scene: the null CODEC for
+every packet, lossless binary-float coordinates and normals, valid stored hashes, and a topology
+of one closed component per triangle (§7.1.4.1.3.1's cover-face mechanism — DESIGN.md).
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Shape LOD Segment (p.92) | done | done | ShapeLodDocumentTest, FixtureDiscoveryTest | all 51 fixture bodies (12 v9 + 39 v10) typed + byte-identical round-trip; unfixtured element types opaque-with-note |
-| Shape LOD Element (p.92) | done | done | ShapeLodDocumentTest | element framing + strict-or-opaque dispatch, both generations |
-| Tri-Strip Set Shape LOD Element (p.92) | done | done | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, .v10TriStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | both generations fixture-verified incl. decoded triangles/normals (v9 delta 14; v10 delta 27) |
-| Polyline Set Shape LOD Element (p.93) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified (15 NIST bodies, FGPV/length/coordinate hashes); JT 9 layout unestablished — no v9 fixture carries one, opaque-with-note |
+| Shape LOD Segment (p.92) | done | done | ShapeLodDocumentTest, FixtureDiscoveryTest | all 51 fixture bodies (12 v9 + 39 v10) typed + byte-identical round-trip; unfixtured element types opaque-with-note | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Shape LOD Element (p.92) | done | done | ShapeLodDocumentTest | element framing + strict-or-opaque dispatch, both generations | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Tri-Strip Set Shape LOD Element (p.92) | done | done | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, .v10TriStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | both generations fixture-verified incl. decoded triangles/normals (v9 delta 14; v10 delta 27) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Polyline Set Shape LOD Element (p.93) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified (15 NIST bodies, FGPV/length/coordinate hashes); JT 9 layout unestablished — no v9 fixture carries one, opaque-with-note | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Point Set Shape LOD Element (p.93) | opaque | opaque | ShapeLodDocumentTest.unestablishedV10ShapeTypesStayOpaqueWithNote | no fixture carries one; named note |
 | Polygon Set LOD Element (p.94) | opaque | opaque | ShapeLodDocumentTest (opaque paths) | as above |
 | Null Shape LOD Element (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | both generations spec-derived (I16 vs U8 version), not yet fixture-verified — neither fixture carries one |
@@ -192,19 +203,19 @@ milestone 2).
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | done | done | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, .v10TriStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 layout delta 14 (reserved 12-byte tail); v10 layout incl. the nested element header (delta 27) — both fixture-verified |
-| Fig. 82 — Polyline Set Shape LOD Element data collection (p.93) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified; JT 9 opaque-with-note (no fixture) |
+| Fig. 81 — Tri-Strip Set Shape LOD Element data collection (p.92) | done | done | ShapeLodDocumentTest.triStripSetElementDecodesTheTetrahedron, .v10TriStripSetElementDecodesTheTetrahedron, FixtureDiscoveryTest | v9 layout delta 14 (reserved 12-byte tail); v10 layout incl. the nested element header (delta 27) — both fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 82 — Polyline Set Shape LOD Element data collection (p.93) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified; JT 9 opaque-with-note (no fixture) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 83 — Point Set Shape LOD Element data collection (p.94) | opaque | opaque | ShapeLodDocumentTest.unestablishedV10ShapeTypesStayOpaqueWithNote | see section row |
 | Fig. 84 — Polygon Set LOD Element data collection (p.94) | opaque | opaque |  | see section row |
-| Fig. 85 — Vertex Shape LOD Data collection (p.95) | done | done | ShapeLodDocumentTest (both tetrahedra), FixtureDiscoveryTest | v9: I16 version + U64 bindings; v10: I8 version + U64 bindings + the nested Logical Element Header whose type GUIDs are absent from Annex A (delta 27) — both fixture-verified |
-| Fig. 86 — Base Shape LOD Data collection (p.97) | done | done | ShapeLodDocumentTest (both tetrahedra) | I16 version in v9, I8 in v10 — both fixture-verified |
-| Fig. 87 — TopoMesh Compressed LOD Data collection (p.97) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified (the polyline container); JT 9 with the polyline element |
-| Fig. 88 — TopoMesh LOD Data collection (p.98) | done | done | ShapeLodDocumentTest (both tetrahedra) | v9: I16 version + I32 object id; v10: U8 + U32 — both fixture-verified |
-| Fig. 89 — TopoMesh Compressed Rep Data data collection (p.99) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified: FGPV + unique-length hashes validated, index lists carry count+1 terminators; JT 9 with the polyline element |
-| Fig. 90 — Quantization Parameters data collection (p.101) | done | done | ShapeLodDocumentTest, FixtureDiscoveryTest | 4×U8, identical in both generations; delta 21 (v9 normal bits factor is not authoritative); in v10 factor == the packed Deering per-angle bits in all 39 bodies (DESIGN.md) |
-| Fig. 91 — TopoMesh Topologically Compressed LOD Data collection (p.102) | done | done | ShapeLodDocumentTest (both tetrahedra) | I16 version in v9, U8 in v10 — both fixture-verified |
-| Fig. 92 — Topologically Compressed Rep Data Collection (p.103) | done | done | ShapeLodDocumentTest (tetrahedra + corrupt-stream refusals), FixtureDiscoveryTest | both generations fixture-verified incl. composite-hash validation and the Annex-D topology decode; the 8th mask context is 30/30/4 in v9 (delta 20) and 32/32 in v10 (figure-accurate) |
-| Fig. 93 — Topologically Compressed Vertex Records data collection (p.106) | done | done | ShapeLodDocumentTest (both tetrahedra), FixtureDiscoveryTest | both generations fixture-verified incl. v10 per-vertex flag arrays; colours/texcoords/aux bindings refuse with note (no fixture) |
+| Fig. 85 — Vertex Shape LOD Data collection (p.95) | done | done | ShapeLodDocumentTest (both tetrahedra), FixtureDiscoveryTest | v9: I16 version + U64 bindings; v10: I8 version + U64 bindings + the nested Logical Element Header whose type GUIDs are absent from Annex A (delta 27) — both fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 86 — Base Shape LOD Data collection (p.97) | done | done | ShapeLodDocumentTest (both tetrahedra) | I16 version in v9, I8 in v10 — both fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 87 — TopoMesh Compressed LOD Data collection (p.97) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified (the polyline container); JT 9 with the polyline element | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 88 — TopoMesh LOD Data collection (p.98) | done | done | ShapeLodDocumentTest (both tetrahedra) | v9: I16 version + I32 object id; v10: U8 + U32 — both fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 89 — TopoMesh Compressed Rep Data data collection (p.99) | partial | partial | ShapeLodDocumentTest.v10PolylineSetElementDecodesTheSquareOutline, FixtureDiscoveryTest | v10 fixture-verified: FGPV + unique-length hashes validated, index lists carry count+1 terminators; JT 9 with the polyline element | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 90 — Quantization Parameters data collection (p.101) | done | done | ShapeLodDocumentTest, FixtureDiscoveryTest | 4×U8, identical in both generations; delta 21 (v9 normal bits factor is not authoritative); in v10 factor == the packed Deering per-angle bits in all 39 bodies (DESIGN.md) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 91 — TopoMesh Topologically Compressed LOD Data collection (p.102) | done | done | ShapeLodDocumentTest (both tetrahedra) | I16 version in v9, U8 in v10 — both fixture-verified | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 92 — Topologically Compressed Rep Data Collection (p.103) | done | done | ShapeLodDocumentTest (tetrahedra + corrupt-stream refusals), FixtureDiscoveryTest | both generations fixture-verified incl. composite-hash validation and the Annex-D topology decode; the 8th mask context is 30/30/4 in v9 (delta 20) and 32/32 in v10 (figure-accurate) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
+| Fig. 93 — Topologically Compressed Vertex Records data collection (p.106) | done | done | ShapeLodDocumentTest (both tetrahedra), FixtureDiscoveryTest | both generations fixture-verified incl. v10 per-vertex flag arrays; colours/texcoords/aux bindings refuse with note (no fixture) | **Write: authored by `writeJt`** (WriteJtTest, WriteFixtureRewriteTest).
 | Fig. 94 — Null Shape LOD Element data collection (p.107) | partial | partial | ShapeLodDocumentTest.nullShapeLodElementDecodesInV9 | both generations spec-derived, not yet fixture-verified |
 | Fig. 96 — Lossless Compressed Primitive Set Data collection (p.109) | opaque | opaque |  | inside the opaque Primitive Set body |
 | Fig. 97 — Lossy Quantized Primitive Set Data collection (p.111) | opaque | opaque |  | inside the opaque Primitive Set body |
@@ -337,22 +348,22 @@ the NIST bytes contradict or complete the v10 text.
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Fig. 131 — PMI Model View Sort Orders data collection (p.154) | — | — |  |  |
-| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | done | done | Int32CdpTest, Int32CdpV10Test (all codec paths + hostile inputs), FixtureDiscoveryTest | JT 9 "Mk. 2" (delta 15) and v10 third-generation wire formats, both fixture-verified; out-of-band packet conditional on the escape entry (delta 28) |
+| Fig. 132 — Int32 Compressed Data Packet data collection (p.156) | done | done | Int32CdpTest, Int32CdpV10Test (all codec paths + hostile inputs), FixtureDiscoveryTest | JT 9 "Mk. 2" (delta 15) and v10 third-generation wire formats, both fixture-verified; out-of-band packet conditional on the escape entry (delta 28) | **Write: authored by `writeJt`** — the null CODEC (Table 64 value 0) is the packet form the writer emits (WriteJtTest.authoredTopologyIsOneClosedComponentPerTriangle).
 | Fig. 133 — Int32 Probability Context (p.159) | done | done | Int32CdpTest.arithmeticCodecDecodesWithEscapeAndOutOfBand, Int32CdpV10Test | JT 9 table (delta 16: symbol field, escape −2) and v10 table (escape flag, 7-bit value width) |
 | Fig. 134 — Int32 Probability Context Table Entry data collection (p.160) | done | done | Int32CdpV10Test (escape + escapeless vectors) | as Fig. 133 |
 | Fig. 135 — Int64 Compressed Data Packet data collection (p.161) | — | — |  | first consumer is B-rep/curve data |
 | Fig. 136 — Int64 Probability Context data collection (p.163) | — | — |  | as above |
 | Fig. 137 — Int64 Probability Context Table Entry data collection (p.163) | — | — |  | as above |
-| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | done | done | VertexArrayTest (both generations, hash refusals), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 layout with per-array lossless hashing (delta 29) |
-| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | done | done | VertexArrayTest (both generations incl. the NULL-predictor pin), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 packed Deering codes, NULL predictor (delta 30) |
+| Fig. 138 — Compressed Vertex Coordinate Array data collection (p.164) | done | done | VertexArrayTest (both generations, hash refusals), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 layout with per-array lossless hashing (delta 29) | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
+| Fig. 139 — Compressed Vertex Normal Array data collection (p.166) | done | done | VertexArrayTest (both generations incl. the NULL-predictor pin), FixtureDiscoveryTest | JT 9 layout (delta 19); v10 packed Deering codes, NULL predictor (delta 30) | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
 | Fig. 140 — Compressed Vertex Texture Coordinate Array data collection (p.167) | — | — |  | no fixture declares the binding; refuses with note |
 | Fig. 141 — Compressed Vertex Colour Array data collection (p.169) | — | — |  | as above |
 | Fig. 142 — Compressed Vertex Flag Array data collection (p.170) | done | done | VertexArrayTest.vertexFlagArrayRoundTripsAndValidatesTheCount, FixtureDiscoveryTest | v10 fixture-verified (Table 48 bit 7 on every NIST body) |
 | Fig. 143 — Compressed Auxiliary Fields Array data collection (p.171) | — | — |  | as above |
-| Fig. 144 — Point Quantizer Data collection (p.174) | done | done | VertexArrayTest.pointQuantizerIsThreeUniformQuantizers, FixtureDiscoveryTest | identical in both generations |
+| Fig. 144 — Point Quantizer Data collection (p.174) | done | done | VertexArrayTest.pointQuantizerIsThreeUniformQuantizers, FixtureDiscoveryTest | identical in both generations | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
 | Fig. 145 — Texture Quantizer Data collection (p.175) | — | — |  | with the texture coordinate array |
 | Fig. 146 — Colour Quantizer Data collection (p.176) | — | — |  | with the colour array |
-| Fig. 147 — Uniform Quantizer Data collection (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations |
+| Fig. 147 — Uniform Quantizer Data collection (p.177) | done | done | VertexArrayTest.uniformQuantizerRoundTripsAndDequantizes, FixtureDiscoveryTest | identical in both generations | **Write: authored by `writeJt`** on the lossless path (zero quantization bits, raw float bits, per-array hashes).
 | Fig. 148 — Compressed Entity List for Non-Trivial Knot Vector data collection (p.178) | — | — |  |  |
 | Fig. 149 — Compressed Control Point Weights Data collection (p.180) | — | — |  |  |
 | Fig. 150 — Compressed Curve Data collection (p.182) | — | — |  |  |
@@ -368,24 +379,24 @@ the NIST bytes contradict or complete the v10 text.
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Common Data Conventions and Constructs (p.196) | — | — |  |  |
-| Late-Loading Data (p.196) | done | — | SceneReadTest, SceneSyntheticFileTest, SceneFixtureTest, FixtureDiscoveryTest | shape geometry resolved via Late Loaded Property Atoms by segment GUID + shape segment type (delta 13: object ids do not associate) |
+| Late-Loading Data (p.196) | done | done | SceneReadTest, SceneSyntheticFileTest, SceneFixtureTest, FixtureDiscoveryTest, WriteJtTest.namesAndUnitsFollowTheSection138Conventions | shape geometry resolved via Late Loaded Property Atoms by segment GUID + shape segment type (delta 13: object ids do not associate); the writer mints exactly that association  |
 | TOC Segment Location (p.196) | — | — |  |  |
 | Bit Fields (p.196) | — | — |  |  |
-| Empty Field (p.196) | — | — |  |  |
-| Local version numbers (p.196) | — | — |  |  |
+| Empty Field (p.196) | done | done | FileHeaderTest, WriteJtTest.writtenHeaderFollowsFigure11 | preserved verbatim on read (clause 4.3); the writer emits zero, so no trailing header GUID follows  |
+| Local version numbers (p.196) | done | done | LsgNodeElementCodecTest, WriteJtTest | read per generation (I16 in v9, U8/I8 in v10 — delta 6); the writer emits version 1 for every authored element  |
 | Version numbers (p.196) | — | — |  |  |
-| Hash Value (p.197) | — | — |  |  |
-| Scene graph construction (p.197) | done | — | SceneReadTest, SceneFixtureTest, SceneNistFixtureTest | the Layer 2 walk: partition root, instance sharing (shared scene objects), group/metadata structure; write side comes with `writeJt` |
-| Metadata Conventions (p.198) | partial | — | SceneReadTest, SceneFixtureTest | the name/units conventions are interpreted (rows below); all other properties are carried as Layer 1 atoms, uninterpreted |
-| Property Key Naming Conventions (p.198) | done | — | SceneReadTest (hidden vs. visible key forms), SceneFixtureTest | hidden `key` and visible `key::` accepted as one key, case-sensitive otherwise |
+| Hash Value (p.197) | done | done | VertexArrayTest, ShapeLodDocumentTest, WriteJtTest, WriteFixtureRewriteTest | every stored shape hash is verified at decode (Annex C row) and computed by the writer — an authored body whose hash disagreed would refuse to decode  |
+| Scene graph construction (p.197) | done | done | SceneReadTest, SceneFixtureTest, SceneNistFixtureTest, WriteJtTest, WriteFixtureRewriteTest | the Layer 2 walk: partition root, instance sharing (shared scene objects), group/metadata structure; `writeJt` is its inverse — instanced subtrees round-trip as shared objects  |
+| Metadata Conventions (p.198) | partial | partial | SceneReadTest, SceneFixtureTest, WriteJtTest | the name/units conventions are interpreted and authored (rows below); all other properties are carried as Layer 1 atoms, uninterpreted and not invented on write  |
+| Property Key Naming Conventions (p.198) | done | done | SceneReadTest (hidden vs. visible key forms), SceneFixtureTest, WriteJtTest | hidden `key` and visible `key::` accepted as one key, case-sensitive otherwise; the writer emits the hidden form  |
 | PMI Properties (p.199) | — | — |  | with the PMI package (§11) |
-| CAD Properties (p.199) | partial | — | SceneReadTest (units battery), SceneFixtureTest, SceneNistFixtureTest | JT_PROP_MEASUREMENT_UNITS (the required property) interpreted case-insensitively per the spec's own producer note — both fixtures write "Millimeters"; the other CAD properties pass through as Layer 1 atoms |
+| CAD Properties (p.199) | partial | partial | SceneReadTest (units battery), SceneFixtureTest, SceneNistFixtureTest, WriteJtTest.undeclaredUnitsAreRefused | JT_PROP_MEASUREMENT_UNITS (the required property) interpreted case-insensitively per the spec's own producer note — both fixtures write "Millimeters", which is what the writer emits; a scene without units is refused rather than defaulted; the other CAD properties pass through as Layer 1 atoms  |
 | Tessellation Properties (p.201) | — | — |  | carried raw at Layer 1 (Chordal/Angular/SegLength observed on the NIST fixture) |
-| Miscellaneous Properties (p.202) | partial | — | SceneReadTest.nameEncodingIsDecodedAndPlainNamesPassVerbatim, SceneNistFixtureTest | JT_PROP_NAME incl. the `Name;version;instance:` encoded form interpreted (both fixtures use it); the other miscellaneous keys pass through |
+| Miscellaneous Properties (p.202) | partial | partial | SceneReadTest.nameEncodingIsDecodedAndPlainNamesPassVerbatim, SceneNistFixtureTest, WriteJtTest | JT_PROP_NAME incl. the `Name;version;instance:` encoded form interpreted (both fixtures use it); the writer emits the plain name form; the other miscellaneous keys pass through  |
 | The SUBNODE property and Reference Sets (p.203) | — | — |  | observed on the NIST fixture, carried raw; interpretation's time comes with a consumer that needs reference sets |
-| LSG Attribute Accumulation Semantics (p.207) | partial | — | SceneReadTest (replacement, ignore flag, force/final note), TransformProbeTest, SceneFixtureTest (world bounds) | transforms multiply, materials replace, Ignore flag honored; force/final/field-inhibit produce a named note instead of a guess — both fixtures use plain accumulation (stateFlags 8 everywhere) |
-| LSG Part Structure (p.208) | done | — | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneFixtureTest, SceneNistFixtureTest | the Figure 160 convention collapses to one named part node with per-tier meshes |
-| Range LOD Node Alternative Rep Selection (p.208) | partial | — | SceneReadTest (LodPolicy tests), SceneFixtureTest (descending tiers) | tier order (finest first) interpreted by LodPolicy; the eye-distance selection strategy is viewer runtime behavior, not a file property |
+| LSG Attribute Accumulation Semantics (p.207) | partial | partial | SceneReadTest (replacement, ignore flag, force/final note), TransformProbeTest, SceneFixtureTest (world bounds), WriteJtTest | transforms multiply, materials replace, Ignore flag honored; force/final/field-inhibit produce a named note instead of a guess — both fixtures use plain accumulation (stateFlags 8 everywhere), which is what the writer emits  |
+| LSG Part Structure (p.208) | done | done | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneFixtureTest, SceneNistFixtureTest, WriteJtTest | the Figure 160 convention collapses to one named part node with per-tier meshes; `writeJt` emits the convention back (Part → Range LOD → per-tier shapes)  |
+| Range LOD Node Alternative Rep Selection (p.208) | partial | partial | SceneReadTest (LodPolicy tests), SceneFixtureTest (descending tiers), WriteJtTest.everyLodTierBecomesItsOwnShapeSegment | tier order (finest first) interpreted by LodPolicy and written back as child order with one Shape LODn segment per tier; the eye-distance selection strategy is viewer runtime behavior, not a file property — the writer emits empty range limits, as the installed base does  |
 | B-Rep Face Group Associations (p.208) | — | — |  | face groups are preserved at Layer 1 (TriStripGeometry.Triangle.faceGroup); the association semantics wait for B-rep interpretation, which is out of scope by doctrine |
 | Watermark Image (p.209) | — | — |  |  |
 
@@ -395,7 +406,7 @@ the NIST bytes contradict or complete the v10 text.
 | Fig. 157 — Assembly node without SUBNODE (p.204) | — | — |  | as above |
 | Fig. 158 — Displaying Nodes that have SUBNODE properties (p.204) | — | — |  | as above |
 | Fig. 159 — CAD Component with Reference sets (p.205) | — | — |  | as above |
-| Fig. 160 — JT Format Convention for Modeling each Part in LSG (p.208) | done | — | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneNistFixtureTest | Part → Range LOD → per-tier Group → Shape, verified on both fixtures; the collapse folds it into one named part node |
+| Fig. 160 — JT Format Convention for Modeling each Part in LSG (p.208) | done | done | SceneReadTest.partConventionCollapsesToNamedPartsUnderTheRoot, SceneNistFixtureTest, WriteJtTest | Part → Range LOD → per-tier Group → Shape, verified on both fixtures; the collapse folds it into one named part node, and `writeJt` unfolds it again  |
 
 
 ## Annex A — Object Type Identifiers
@@ -416,7 +427,7 @@ the NIST bytes contradict or complete the v10 text.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
-| Hash function implementation (p.239) | done | done | JtHashTest, FixtureDiscoveryTest | hash32 + hash16 (Jenkins lookup2); all 153 stored shape hashes verified at decode (36 across the 9.5 fixture's 12 bodies, 117 across the NIST fixture's 39) |
+| Hash function implementation (p.239) | done | done | JtHashTest, FixtureDiscoveryTest | hash32 + hash16 (Jenkins lookup2); all 153 stored shape hashes verified at decode (36 across the 9.5 fixture's 12 bodies, 117 across the NIST fixture's 39) | **Write: authored by `writeJt`** — every authored shape body's composite, coordinate, normal and FGPV hashes are computed here, and the reader's verification is what proves them (WriteFixtureRewriteTest).
 
 
 ## Annex D — Polygon Mesh Topology Coder
