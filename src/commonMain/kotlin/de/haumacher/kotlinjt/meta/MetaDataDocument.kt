@@ -46,9 +46,13 @@ data class MetaDataDocument(
     val propertyProxies: List<PropertyProxyMetaDataElement>
         get() = elements.filterIsInstance<PropertyProxyMetaDataElement>()
 
-    /** The PMI managers of this segment, in element order. */
+    /** The v10 PMI managers of this segment, in element order. */
     val pmiManagers: List<PmiManagerMetaDataElement>
         get() = elements.filterIsInstance<PmiManagerMetaDataElement>()
+
+    /** The JT 9.5 PMI managers of this segment, in element order (9.5 Figure 136). */
+    val pmi95Managers: List<Pmi95ManagerMetaDataElement>
+        get() = elements.filterIsInstance<Pmi95ManagerMetaDataElement>()
 
     /** Serializes the document back to element-stream bytes — the exact inverse of [decode]. */
     fun encode(order: Endianness): Bytes {
@@ -186,9 +190,9 @@ private fun decodeMetaElementBody(
     // Wire layouts established per generation. The Property Proxy element's layout is
     // documented identically by the v10 (Figure 108) and v9.5 (Figure 134) references — only
     // the version field's width differs (DESIGN.md delta 6), so it decodes in all three
-    // generations. The PMI Manager's v9 layout is a *different* structure (the v9.5 Figure 136
-    // adds a PMI Version Number and reserved field and lists a wholly different set of
-    // sub-collections) and no v9 fixture carries one: opaque with a named note, never guessed.
+    // generations. The PMI Manager is *two* elements sharing one Object Type ID: the v10
+    // Figure 110 structure and the older, larger JT 9.5 Figure 136 one, which v10 deleted the
+    // typed-entity half of. Each generation gets its own codec — see Pmi95Elements.kt.
     val decoder: ((ByteReader) -> TypedMetaDataElement)? =
         when (typeId) {
             ObjectTypeIds.PROPERTY_PROXY_META_DATA_ELEMENT -> { r ->
@@ -198,7 +202,19 @@ private fun decodeMetaElementBody(
             }
             ObjectTypeIds.PMI_MANAGER_META_DATA_ELEMENT ->
                 if (generation == LsgGeneration.V9) {
-                    null
+                    { r ->
+                        val decoded = readPmi95ManagerMetaDataElement(r)
+                        decoded.cadTagRefusal?.let { localNotes.add(LoadNote.CadTagVectorsUnrecognized(location, it)) }
+                        if (decoded.textureBindingElements > 0) {
+                            localNotes.add(
+                                LoadNote.PmiPolygonTextureBindingUnsettled(location, decoded.textureBindingElements),
+                            )
+                        }
+                        if (decoded.element.textPolylineForm == Pmi95TextPolylineForm.EMPTY_VECTOR) {
+                            localNotes.add(LoadNote.PmiTextPolylineVectorOffDocument(location))
+                        }
+                        decoded.element
+                    }
                 } else {
                     { r ->
                         readPmiManagerMetaDataElement(
@@ -240,8 +256,12 @@ internal fun encodeMetaElementFrame(
         is OpaqueMetaDataElement -> bodyWriter.writeBytes(element.body)
         is PropertyProxyMetaDataElement -> writePropertyProxyMetaDataElement(bodyWriter, generation, element)
         is PmiManagerMetaDataElement -> {
-            check(generation != LsgGeneration.V9) { "PMI Manager element in a JT 9 document" }
+            check(generation != LsgGeneration.V9) { "v10 PMI Manager element in a JT 9 document" }
             writePmiManagerMetaDataElement(bodyWriter, generation, element)
+        }
+        is Pmi95ManagerMetaDataElement -> {
+            check(generation == LsgGeneration.V9) { "JT 9.5 PMI Manager element in a JT 10 document" }
+            writePmi95ManagerMetaDataElement(bodyWriter, element)
         }
     }
     val body = bodyWriter.toByteArray()

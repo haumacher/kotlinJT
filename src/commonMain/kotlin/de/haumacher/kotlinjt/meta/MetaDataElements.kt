@@ -250,12 +250,20 @@ data class PmiTextBox(
     val upperLeftY: Float,
 )
 
-/** Text Polyline Data (Figure 126): polyline segments of a text representation. */
+/**
+ * Text Polyline Data (Figure 126 == 9.5 Figure 145): polyline segments of a text representation.
+ *
+ * Both references draw the `Polyline Segment Index Count > 0` guard around the index loop **and**
+ * the coordinate vector, so a document-conformant producer writes neither when there are no
+ * segments; NX 10.5 writes the empty vector regardless (DESIGN.md delta 36). [vertexCoords] is
+ * therefore `null` for the figure's form and an (empty) list for the producer's — the model
+ * remembers which it saw, so re-serialization stays byte-identical for both.
+ */
 data class PmiTextPolylineData(
     /** Vertex indices into [vertexCoords] (multiply by 2 for the packed 2D array). */
     val segmentIndices: List<Short>,
-    /** 2D vertex coordinates, packed `[XY][XY]…`. */
-    val vertexCoords: List<Float>,
+    /** 2D vertex coordinates, packed `[XY][XY]…`; `null` when the guard kept them off the wire. */
+    val vertexCoords: List<Float>?,
 )
 
 /**

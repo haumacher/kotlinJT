@@ -472,7 +472,7 @@ class MetaDataDocumentTest {
                 val text = entity.data2d.texts.single()
                 assertEquals("PMI", pmi.string(text.stringId))
                 assertEquals(listOf<Short>(0, 2), text.polylines.segmentIndices)
-                assertEquals(4, text.polylines.vertexCoords.size)
+                assertEquals(4, text.polylines.vertexCoords?.size)
                 assertEquals(listOf(0, 3), entity.data2d.nonTextPolylines.segmentIndices)
                 assertEquals(listOf<Short>(4), entity.data2d.nonTextPolylines.types)
                 assertEquals(6, entity.data2d.nonTextPolylines.vertexCoords.size)
@@ -606,12 +606,13 @@ class MetaDataDocumentTest {
         assertTrue(result.notes.single().message.contains("String ID"))
     }
 
-    // spec: Figure 110
+    // spec: 9.5 Figure 136
     @Test
-    fun theV9PmiManagerLayoutIsNotGuessed() {
+    fun aV9PmiManagerBodyThatIsNotFigure136IsNotGuessed() {
         val order = Endianness.LITTLE_ENDIAN
-        // The v9.5 reference's Figure 136 is a different structure (PMI Version Number,
-        // reserved field, a different sub-collection set) and no v9 fixture carries one.
+        // Figure 136's prologue and then nothing: the thirteen typed collections of Figure 137
+        // are unconditional, so this body cannot be a JT 9.5 PMI Manager. It is named and
+        // carried verbatim rather than half-read.
         val bytes =
             segment(
                 order,
@@ -622,10 +623,33 @@ class MetaDataDocumentTest {
                 },
             )
         val result = decode(bytes, order, v9)
-        assertEquals(listOf("ELEMENT_LAYOUT_UNVERIFIED"), result.notes.map { it.name })
+        assertEquals(listOf("ELEMENT_DECODE_FAILED"), result.notes.map { it.name })
         val opaque = assertIs<OpaqueMetaDataElement>(result.document.elements.single())
         assertEquals(9, opaque.objectBaseType)
         assertContentEquals(bytes, result.document.encode(order).toByteArray())
+    }
+
+    // spec: 9.5 Figure 136
+    @Test
+    fun aV9PmiManagerWithAnUndocumentedVersionNumberRefusesByName() {
+        val order = Endianness.LITTLE_ENDIAN
+        // §7.2.6.2 names 1 and 2 for the element and 3…8 for the PMI content. Outside those,
+        // the guards that shape the whole body are unknown — refuse rather than pick a layout.
+        for (prologue in listOf(listOf(3, 8), listOf(1, 2))) {
+            val bytes =
+                segment(
+                    order,
+                    metaFrame(order, ObjectTypeIds.PMI_MANAGER_META_DATA_ELEMENT) {
+                        writeI16(prologue[0].toShort())
+                        writeI16(prologue[1].toShort())
+                        writeI16(0)
+                    },
+                )
+            val result = decode(bytes, order, v9)
+            assertEquals(listOf("ELEMENT_DECODE_FAILED"), result.notes.map { it.name })
+            assertTrue(result.notes.single().message.contains("Version Number"))
+            assertContentEquals(bytes, result.document.encode(order).toByteArray())
+        }
     }
 
     // spec: Figure 107

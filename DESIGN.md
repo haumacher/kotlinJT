@@ -224,6 +224,13 @@ What that pass did to the deltas recorded below:
   *element*, gated on local version 2, not inside Base Light Data (delta 45) · State Flags bit
   `0x01` and the field-inhibit bit assignments differ in meaning between the generations
   (delta 46).
+- **A whole element family recovered (package P9):** 9.5 §7.2.6.2's PMI Manager is not the v10
+  one with extra fields — v10 *deleted* the thirteen typed PMI-entity collections of Figure 137
+  and folded them into Generic PMI Entities. The library refused the v9 element by policy; it now
+  decodes it with its own codec. See *The JT 9.5 PMI element family* and deltas 48–50. The same
+  package confirmed delta 35 from 9.5's Figure 139 and corrected delta 36 (below), and it
+  **confirms** two guards the code already had from prose alone: 9.5 Figure 140 draws the
+  `2D-Frame Flag != 0` guard v10 keeps only in words.
 - **Refuted, and then acted on (package P7):** the statement in `LwpaDocument.kt`, this file and
   `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It does —
   §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries. All
@@ -1311,11 +1318,11 @@ value sets are open and the numbers are carried as read.
 **Generation policy.** The Property Proxy element decodes in all three generations: the v9.5
 reference's own Figure 134 shows the identical layout with only the version field's width
 differing (delta 6), so v9 is spec-derived from *its own generation's spec*, not derived from
-v10. The PMI Manager's v9 layout is a genuinely different structure (the v9.5 Figure 136 adds a
-PMI Version Number and a reserved field, gates sub-collections on it, and lists per-entity-type
-collections v10 dropped) and no v9 fixture carries one, so it is opaque-by-policy in V9 with
-`ELEMENT_LAYOUT_UNVERIFIED` — never guessed. Between V10 and V10_5 only the Hidden Flag width
-differs (delta 32); 10.0–10.4 keep the documented layout, as with the LSG deltas 23–26.
+v10. The PMI Manager is **two elements sharing one Object Type ID** — the v10 Figure 110
+structure described above and the older, larger JT 9.5 Figure 136 one, decoded by its own codec
+since package P9 (see *The JT 9.5 PMI element family* below). Between V10 and V10_5 only the
+Hidden Flag width differs (delta 32); 10.0–10.4 keep the documented layout, as with the LSG
+deltas 23–26.
 
 **Layer 1 only.** No scene-façade change: `readScene` neither reads nor is affected by §11
 (pinned by `MetaDataProbeTest.theSceneFacadeIsUnaffectedByTypedMetaData`), and `writeJt` still
@@ -1357,12 +1364,28 @@ reading the evidence supports.
     empty rounded box at the end of PMI 2D Data; §11.2.6.1.3 places Non-Text Polyline Data
     inside PMI 2D Data without saying where, and the bytes settle it: every Generic PMI Entity
     of the fixture carries four index/type/width/coordinate arrays exactly there.
-36. **Text Polyline Data's `VecF32 Polyline Vertex Coords` is unconditional.** Figure 126 gates
-    only the *index* loop on `Polyline Segment Index Count > 0`. Evidence: the fixture's 2D Text
-    Data records are a fixed 48 bytes when a text has no polylines — 40 bytes of scalars plus
-    *two* zero counts — so the coordinate vector is written even when empty (verified across
-    every text entity of all 14 bodies; the largest body's 17 texts of one dimension are spaced
-    exactly 48 bytes apart).
+    **Upgraded from fixture-inferred to cited (package P9):** 9.5's Figure 139 (p.169) draws the
+    same four boxes in the same order and *labels* the fourth `Non-Text Polyline Data`.
+36. **NX 10.5 writes Text Polyline Data's `VecF32 Polyline Vertex Coords` where both references
+    exclude it.** *(Corrected by package P9 — the original entry read the figure the wrong way
+    round and said the vector was unconditional "because Figure 126 gates only the index loop".
+    It does not: in v10 Figure 126 (p.146) **and** 9.5 Figure 145 (p.174), read from the rendered
+    page images, the `Polyline Segment Index Count > 0` guard rectangle encloses the index loop
+    **and** the `VecF32`; the main spine bypasses both and rejoins below the vector box. The two
+    references agree with each other.)*
+
+    The *byte evidence* is unchanged and is not in dispute: the fixture's 2D Text Data records
+    are a fixed 48 bytes when a text has no polylines — 40 bytes of scalars plus *two* zero
+    counts — so NX writes the coordinate vector even when empty (verified across every text
+    entity of all 14 bodies; the largest body's 17 texts of one dimension are spaced exactly 48
+    bytes apart). So this is a **producer-vs-document conflict**, not a documentation gap, and
+    the doctrine applies: the reader accepts both, and the model records which it saw.
+    `PmiTextPolylineData.vertexCoords` is therefore **nullable** — `null` is the figure's form,
+    an (empty) list is the producer's — and the writer emits exactly what the field holds. Before
+    P9 the model could not tell "absent" from "present and empty", so a document-conformant
+    producer's file would not have round-tripped. The v10 reader keeps reading the producer form
+    (that is what the corpus proves); the 9.5 reader *resolves* it — see
+    `Pmi95TextPolylineForm` in the next section.
 
 Recorded observations from the same evidence:
 
@@ -1394,6 +1417,126 @@ Recorded observations from the same evidence:
   `__PLM_PS_OCC_RelRoot` (the one Integer key, value 1). No `Date` and no type-0 value occurs
   in either fixture, so those two Table 53 rows are exercised only by the hand-built per-figure
   test — recorded honestly rather than claimed fixture-verified.
+
+## The JT 9.5 PMI element family (9.5 §7.2.6.2, Figures 136–170 — package P9)
+
+**v10 deleted a wire format, and it is the one JT 9 files use.** 9.5's Figure 136 reads,
+unconditionally and before anything else, a *PMI Entities* block (Figure 137) that is a fixed
+sequence of **thirteen typed collections**: Dimension → Note → Datum Feature Symbol → Datum
+Target → Feature Control Frame → Line Weld → Spot Weld → Surface Finish → Measurement Point →
+Locator → Reference Geometry → Design Group → Coordinate System. That order is the figure's own
+(left column top-to-bottom, then right, following its arrows — read from the rendered page image
+of p.168) and it is also the order of §7.2.6.2.1.1 … §7.2.6.2.1.13, two independent readings that
+agree. v10's Figure 110 has **no such box**: Design Group Entities is the only survivor, promoted
+to a top-level sibling, and the other twelve are absent from v10's normative text entirely — no
+figure, no section, no prose — their semantics folded into *Generic PMI Entities*, which grew
+from two 9.5 pages to eleven and gained sixteen entity-type codes. The corroboration is v10's own
+CAD-tag index formula (§11.2.7), which still sums the same fifteen entity counts, twelve of which
+v10 no longer defines anywhere.
+
+So this is not a flagged reuse of the v10 codecs. `Pmi95ManagerMetaDataElement` /
+`Pmi95Codecs.kt` are **a second PMI path beside the v10 one**, dispatched on `LsgGeneration.V9`
+from the same Object Type ID, with their own model types throughout. Nine independent structural
+differences make sharing a trap rather than an economy:
+
+| # | 9.5 Figure 136 | v10 Figure 110 |
+|---|---|---|
+| 1 | `I16 Version Number` (1 or 2) | `U8 Version Number` |
+| 2 | `I16 PMI Version Number` (3…8) | `I16 Empty Field` |
+| 3 | `I16 Reserved Field` | — |
+| 4 | **PMI Entities** (Figure 137, thirteen collections) | — |
+| 5 | PMI Associations, User Attributes, String Table | Design Groups, Associations, User Attributes, String Table |
+| 6 | `[PMI Version > 5]` → Model Views, Generic PMI Entities | both unguarded |
+| 7 | `[PMI Version > 7]` → CAD Tags Flag → PMI CAD Tag Data | unguarded |
+| 8 | `[Version > 1]` → `PMI Property × Model View Count`, PMI Polygon Data, fonts | fonts unguarded, per-view properties inside Figure 116 |
+| 9 | *(element ends at the font loop)* | PMI Properties, PMI Model View Sort Orders |
+
+**Every guard keys off the PMI Version Number, not the element version.** 9.5's prose says plain
+"Version Number" at Figures 140, 147, 148, 153, 156 and 162 where the *figures* say **PMI**
+Version Number; since the element version only ever takes 1 or 2, the prose's "> 4" and "> 5"
+readings are unsatisfiable. The figures are right and the prose is loose shorthand — the one
+place plain `Version Number` genuinely means the element version is Figure 136's own
+`Version Number > 1` tail guard. `Pmi95Gates` names all six thresholds in one place.
+
+**The three deltas that would have desynchronized silently**, and the tests that pin them:
+
+48. **PMI Associations are permuted, not merely gated.** 9.5 Figure 162 writes
+    `Source Data → Destination Data → Reason Code → [PMI Version > 5] Source Owner →
+    Destination Owner`; v10 Figure 113 writes `Source → Source Owner → Reason → Destination →
+    Destination Owner`. All five words are `I32`, so a v10-order read of a 9.5 association
+    consumes **exactly twenty bytes** and produces silently wrong meaning: what 9.5 calls the
+    destination entity lands in the source's owning-part field and vice versa, while the source
+    data and the reason code coincide by accident. No length check, byte count or round-trip can
+    see this, which is why
+    `Pmi95DocumentTest.associationsFollowTheNinePointFiveFieldOrderNotTheV10One` asserts the
+    *semantics* of both readings side by side.
+49. **9.5 PMI strings are single-byte `String`, not `MbString`.** §7.1.1 (p.24) defines
+    `String` = `I32 Count + Count × U8` and `MbString` = `I32 Count + Count × U16`; 9.5 uses
+    both deliberately — Figure 164's PMI String Table and Figure 136's Font Name are `String`,
+    Figure 168's property atom value and Figure 134's proxy keys are `MbString`. v10 raised the
+    first two. Read the v10 way, a 9.5 string table consumes twice the bytes of every string
+    and never recovers. The paired width delta: `VecI32 Character Set` (9.5, four bytes per
+    glyph id) against v10's `VecU16`. Pinned by
+    `.theStringTableAndFontNamesAreSingleByteStrings` and `.fontCharacterSetsAreVecI32NotVecU16`.
+50. **The Hidden Flag has three encodings that must coexist.** Figure 168 gates it on
+    `PMI Version Number > 6`, so *absent* is a real state beside NX 10.5's one byte (delta 32)
+    and the documented v10 `U32`. A PMI Property is two atoms and atoms sit inside every generic
+    entity, so this is the largest collection in the element. `Pmi95PropertyAtom.hiddenFlag` is
+    nullable and records which of the three it saw; `.theHiddenFlagIsAbsentAtPmiVersionSixAndPresentAtSeven`
+    pins it.
+
+**PMI Polygon Data is a different collection in 9.5** (Figure 170 vs Figure 130): `I16 Version` +
+`I32 Reserved Field` where v10 has `U8` + a declared element count; the element count is
+`vNumVerts`' own length; and the three bindings and the polygon dimension are written **inline
+per element** in the order Normal → Color → Texture, where v10 hoists them into parallel
+`vBindings` (Color → Normal → Texture) and `vPolygonDimensions` vectors. It is reachable twice
+per manager — the tail's own block and each font's glyph outlines.
+
+**Where the reader resolves rather than assumes.** A JT 9.5 PMI Manager ends at its font loop —
+9.5 documents *less* there than v10, not more, so `PMI_MANAGER_TAIL_UNDOCUMENTED` and its
+deferral are untouched by this package. That absence is also what makes exact consumption of the
+framed body a decisive oracle, and delta 36's producer-vs-document conflict is settled with it
+rather than by picking a side: the element is parsed with `Pmi95TextPolylineForm.FIGURE` first
+and with `EMPTY_VECTOR` only if the figure's reading does not account for the body. The winner is
+stored on the element so re-serialization is byte-identical, and accepting the off-document form
+raises `PMI_TEXT_POLYLINE_VECTOR_OFF_DOCUMENT` — leniency is recorded *and* named. When no text
+has a zero segment count the two readings are identical and the arbitration stays silent, which
+`.theArbitrationStaysSilentWhenBothFormsAgree` pins.
+
+**What is named rather than decoded, and why.**
+
+- **The coded vectors inside 9.5's Compressed CAD Tag Data.** 9.5 §8.1.16 Figure 242 is not
+  v10's Figure 154: `I16 Version Number` for `U8`, an added `I32 CAD Tag Count` that gates the
+  whole body, `Int32CDP2` under a `Lag1` predictor instead of the third-generation `Int32CDP`
+  with none, and the 64-bit tags split into two `Int32CDP2` halves (Figure 243) instead of an
+  `Int64CDP`. That belongs to the compression package. The collection is **framed** — its own
+  `Data Length` gives an exact extent (delta 34, whose wording 9.5 repeats verbatim) — the coded
+  bytes are kept verbatim and `CAD_TAG_VECTORS_UNRECOGNIZED` names the refusal, so the element
+  still decodes and still round-trips. `encoding/CadTagData.kt` is **untouched**.
+- **Figure 170's `TextureBinding == 1` branch.** The figure labels the box `I16 : Reserved
+  Field`; §7.2.6.2.8's prose says `VecF32: Texture Coords` sized "number of vertices multiplied
+  by 2". The prose is internally consistent and agrees with v10, so the prose is followed — and
+  every element that actually sets the binding raises
+  `PMI_POLYGON_TEXTURE_BINDING_UNSETTLED`, so the first fixture to take the branch settles it
+  instead of passing silently. (The figure's other slip, labelling the `NormalBinding == 1` box
+  `VecF32: Vertices`, costs nothing: prose and figure agree on the width, only on the name do
+  they differ.)
+
+**What refuses outright.** An element or PMI Version Number outside §7.2.6.2's documented sets
+(1–2 and 3–8) shapes the whole body through guards whose behaviour is then unknown, so it is
+refused by name and the element is carried verbatim — as are truncated bodies, counts that do
+not fit, a Hidden Flag outside {0, 1}, a String ID that does not resolve into the PMI String
+Table, and a CAD Tag Index Count that is not §7.2.6.2.7's fifteen-count sum. Those validations
+are what makes a spec-derived decode with no fixture behind it safe to ship: the element either
+accounts for its body exactly and coherently, or it says so.
+
+**Evidence status.** Every layout above is `spec`. **No fixture in the corpus carries a JT 9 PMI
+Manager** — the two 9.5 files carry no §7.2.6 segment at all — so `Pmi95FixtureTest` is the
+auto-discovering hook that fires on the first one and skips visibly until then, in the pattern of
+`LwpaFixtureTest`. It checks what a spec-derived decoder most needs a producer to confirm: typed
+decode with only the three named notes, byte-identical round-trip, **every gated field's presence
+agreeing with the version pair that gates it**, §7.2.6.2.7's formula, String IDs resolving, PMI
+strings representable as single bytes, and polygon/font self-consistency.
 
 ## §8–§10: wireframe reads, B-rep stays sealed, nothing unnamed (issue #10)
 
@@ -1766,7 +1909,10 @@ Recorded observations from the same evidence:
 | ~~Element body parsing for meta data / PMI segments~~ | **done** (issue #9, see *Layer 1: Meta data and PMI*): all 44 Meta Data / PMI Data segments of the NIST fixture decode typed, byte-identical round-trip, cross-checked against the LSG's late-loaded references |
 | The undocumented block NX 10.5 writes after a PMI Manager's fonts (delta 33) — and with it Figure 110's segment-level `Property Count` / PMI Properties and Figure 131's Model View Sort Orders | a fixture whose Property Count or Model View Sort Order Count is non-zero, or documentation of the trailing structure (today: carried verbatim with `PMI_MANAGER_TAIL_UNDOCUMENTED`, never read as something it may not be) |
 | ~~The entropy-coded vectors inside Compressed CAD Tag Data (Figure 154)~~ | **done** (issue #10): the condition ("a consumer needs CAD tags") was met by §10's Wireframe Rep CAD Tag Data. All 5 wireframe reps and all 14 PMI managers decode their tag vectors; Type-2 (64-bit) tags stay spec-derived — no fixture writes one. Undecodable vectors fall back to verbatim bytes with `CAD_TAG_VECTORS_UNRECOGNIZED` |
-| The v9 PMI Manager layout (v9.5 Figure 136: PMI Version Number, reserved field, per-entity-type collections) | the first v9 fixture carrying a PMI Manager (today: opaque with `ELEMENT_LAYOUT_UNVERIFIED`; the v9 Property Proxy element *does* decode — its v9.5 figure is the v10 layout with an I16 version) |
+| ~~The v9 PMI Manager layout (v9.5 Figure 136: PMI Version Number, reserved field, per-entity-type collections)~~ | **done** (package P9, see *The JT 9.5 PMI element family*): the whole of Figures 136–170 decodes typed and round-trips, including all thirteen of Figure 137's collections and the 9.5-only PMI 3D Data. Evidence is `spec` throughout — no fixture carries one, and `Pmi95FixtureTest` is the hook that fires on the first |
+| The coded vectors inside **9.5's** Compressed CAD Tag Data (9.5 §8.1.16 Figures 242/243: `I16` version, an `I32 CAD Tag Count` gate, `Int32CDP2`+`Lag1` vectors, 64-bit tags as two `I32` halves) | the compression package implements 9.5 §8.1.16, or a fixture needs the tags. Today the collection is framed from its own Data Length, the coded bytes are verbatim and `CAD_TAG_VECTORS_UNRECOGNIZED` names it; `encoding/CadTagData.kt` stays v10-only |
+| What follows `TextureBinding == 1` in 9.5's PMI Polygon Data (Figure 170 says `I16 : Reserved Field`, §7.2.6.2.8's prose says `VecF32: Texture Coords`) | the first fixture whose 9.5 glyph or polygon block sets the binding. The prose is followed today — it is self-consistent and matches v10 — and every such element raises `PMI_POLYGON_TEXTURE_BINDING_UNSETTLED` rather than passing silently |
+| Authoring a JT 9.5 PMI Manager from scratch | `writeJt` targets v10 (issue #1: *write one version, read broadly*). The 9.5 writer exists and is byte-exact for re-serialization, which is what Layer 1 losslessness on 9.5 input needs |
 | Surfacing meta data properties and PMI into the Layer 2 scene | a consumer needs them *and* a decision is made about which conventions the scene interprets (§13.8's CAD/tessellation/PMI property tables) rather than passing raw key/value bags through a format-agnostic model; today they are complete at Layer 1 |
 | Authoring §11 segments in `writeJt` (property bags, PMI) | the Layer 2 scene grows the concepts — a file without meta data segments is legal, and the writer emits none today (the read side is `done`, so a written file's bags could be verified against it immediately) |
 | v9 layouts of the non-material attribute elements (lights, styles, transform, textures, mappings) | first v9 fixture carrying them (opaque with `ELEMENT_LAYOUT_UNVERIFIED` until then) |

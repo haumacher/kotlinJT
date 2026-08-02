@@ -37,7 +37,7 @@ internal fun ByteWriter.writeMetaVersionNumber(
 }
 
 /** Reads an element header: the Object Base Type byte plus the I32 object id. */
-private fun ByteReader.readMetaElementHeader(): Int {
+internal fun ByteReader.readMetaElementHeader(): Int {
     val baseType = readU8().toInt()
     if (baseType != BASE_TYPE_JT_BASE) {
         throw JtFormatException("object base type $baseType is not the meta data base type $BASE_TYPE_JT_BASE")
@@ -45,13 +45,13 @@ private fun ByteReader.readMetaElementHeader(): Int {
     return readI32()
 }
 
-private fun ByteWriter.writeMetaElementHeader(objectId: Int) {
+internal fun ByteWriter.writeMetaElementHeader(objectId: Int) {
     writeU8(BASE_TYPE_JT_BASE.toUByte())
     writeI32(objectId)
 }
 
 /** Reads a count that is about to size a list, bounding it against the remaining input. */
-private fun ByteReader.readCount(
+internal fun ByteReader.readCount(
     what: String,
     bytesPerEntry: Int,
 ): Int {
@@ -62,22 +62,22 @@ private fun ByteReader.readCount(
     return count
 }
 
-private fun ByteReader.readVecI32(): List<Int> {
+internal fun ByteReader.readVecI32(): List<Int> {
     val count = readCount("VecI32", 4)
     return List(count) { readI32() }
 }
 
-private fun ByteWriter.writeVecI32(values: List<Int>) {
+internal fun ByteWriter.writeVecI32(values: List<Int>) {
     writeI32(values.size)
     for (value in values) writeI32(value)
 }
 
-private fun ByteReader.readVecI16(): List<Short> {
+internal fun ByteReader.readVecI16(): List<Short> {
     val count = readCount("VecI16", 2)
     return List(count) { readI16() }
 }
 
-private fun ByteWriter.writeVecI16(values: List<Short>) {
+internal fun ByteWriter.writeVecI16(values: List<Short>) {
     writeI32(values.size)
     for (value in values) writeI16(value)
 }
@@ -92,12 +92,12 @@ private fun ByteWriter.writeVecU16(values: List<Int>) {
     for (value in values) writeU16(value.toUShort())
 }
 
-private fun ByteReader.readVecF32(): List<Float> {
+internal fun ByteReader.readVecF32(): List<Float> {
     val count = readCount("VecF32", 4)
     return List(count) { readF32() }
 }
 
-private fun ByteWriter.writeVecF32(values: List<Float>) {
+internal fun ByteWriter.writeVecF32(values: List<Float>) {
     writeI32(values.size)
     for (value in values) writeF32(value)
 }
@@ -227,7 +227,7 @@ private fun ByteWriter.writeHiddenFlag(
 }
 
 /** Validates a String ID against the PMI String Table: −1 (no string) or a valid index. */
-private fun checkStringId(
+internal fun checkStringId(
     stringId: Int,
     stringCount: Int,
     what: String,
@@ -274,25 +274,53 @@ private fun writePmiProperty(
     writePmiPropertyAtom(w, g, property.value)
 }
 
+/**
+ * Design Group Attribute — v10 Figure 112 and 9.5 Figure 160 are field for field identical, so
+ * both generations share this codec.
+ *
+ * spec: Figure 112 / 9.5 Figure 160
+ */
+internal fun readPmiDesignGroupAttribute(r: ByteReader): PmiDesignGroupAttribute {
+    val type = r.readI32()
+    val value =
+        when (type) {
+            1 -> PmiDesignGroupAttributeValue.Integer(r.readI32())
+            2 -> PmiDesignGroupAttributeValue.Double(r.readF64())
+            3 -> PmiDesignGroupAttributeValue.StringId(r.readI32())
+            else -> throw JtFormatException("Design Group Attribute Type $type is not a Table 54 value")
+        }
+    return PmiDesignGroupAttribute(value, r.readI32(), r.readI32())
+}
+
+internal fun writePmiDesignGroupAttribute(
+    w: ByteWriter,
+    attribute: PmiDesignGroupAttribute,
+) {
+    when (val value = attribute.value) {
+        is PmiDesignGroupAttributeValue.Integer -> {
+            w.writeI32(1)
+            w.writeI32(value.value)
+        }
+        is PmiDesignGroupAttributeValue.Double -> {
+            w.writeI32(2)
+            w.writeF64(value.value)
+        }
+        is PmiDesignGroupAttributeValue.StringId -> {
+            w.writeI32(3)
+            w.writeI32(value.stringId)
+        }
+    }
+    w.writeI32(attribute.labelStringId)
+    w.writeI32(attribute.descriptionStringId)
+}
+
 // spec: Figures 111/112
 private fun readPmiDesignGroups(r: ByteReader): List<PmiDesignGroup> {
     val count = r.readCount("PMI Design Group", 8)
     return List(count) {
         val nameStringId = r.readI32()
         val attributeCount = r.readCount("Design Group Attribute", 12)
-        val attributes =
-            List(attributeCount) {
-                val type = r.readI32()
-                val value =
-                    when (type) {
-                        1 -> PmiDesignGroupAttributeValue.Integer(r.readI32())
-                        2 -> PmiDesignGroupAttributeValue.Double(r.readF64())
-                        3 -> PmiDesignGroupAttributeValue.StringId(r.readI32())
-                        else -> throw JtFormatException("Design Group Attribute Type $type is not a Table 54 value")
-                    }
-                PmiDesignGroupAttribute(value, r.readI32(), r.readI32())
-            }
-        PmiDesignGroup(nameStringId, attributes)
+        PmiDesignGroup(nameStringId, List(attributeCount) { readPmiDesignGroupAttribute(r) })
     }
 }
 
@@ -304,24 +332,7 @@ private fun writePmiDesignGroups(
     for (group in groups) {
         w.writeI32(group.nameStringId)
         w.writeI32(group.attributes.size)
-        for (attribute in group.attributes) {
-            when (val value = attribute.value) {
-                is PmiDesignGroupAttributeValue.Integer -> {
-                    w.writeI32(1)
-                    w.writeI32(value.value)
-                }
-                is PmiDesignGroupAttributeValue.Double -> {
-                    w.writeI32(2)
-                    w.writeF64(value.value)
-                }
-                is PmiDesignGroupAttributeValue.StringId -> {
-                    w.writeI32(3)
-                    w.writeI32(value.stringId)
-                }
-            }
-            w.writeI32(attribute.labelStringId)
-            w.writeI32(attribute.descriptionStringId)
-        }
+        for (attribute in group.attributes) writePmiDesignGroupAttribute(w, attribute)
     }
 }
 
@@ -348,12 +359,12 @@ private fun writePmiAssociations(
 }
 
 // spec: Figure 114
-private fun readPmiUserAttributes(r: ByteReader): List<PmiUserAttribute> {
+internal fun readPmiUserAttributes(r: ByteReader): List<PmiUserAttribute> {
     val count = r.readCount("PMI User Attribute", 8)
     return List(count) { PmiUserAttribute(r.readI32(), r.readI32()) }
 }
 
-private fun writePmiUserAttributes(
+internal fun writePmiUserAttributes(
     w: ByteWriter,
     attributes: List<PmiUserAttribute>,
 ) {
@@ -441,10 +452,10 @@ private fun writePmiModelViews(
 }
 
 // spec: Figure 122
-private fun readPmi2dReferenceFrame(r: ByteReader): Pmi2dReferenceFrame =
+internal fun readPmi2dReferenceFrame(r: ByteReader): Pmi2dReferenceFrame =
     Pmi2dReferenceFrame(r.readVec3F32(), r.readVec3F32(), r.readVec3F32())
 
-private fun writePmi2dReferenceFrame(
+internal fun writePmi2dReferenceFrame(
     w: ByteWriter,
     frame: Pmi2dReferenceFrame,
 ) {
@@ -469,15 +480,32 @@ private fun writePmiTextBox(
     w.writeF32(box.upperLeftY)
 }
 
-// spec: Figure 126
-private fun readPmiTextPolylineData(r: ByteReader): PmiTextPolylineData = PmiTextPolylineData(r.readVecI16(), r.readVecF32())
+/**
+ * Text Polyline Data. v10 Figure 126 and 9.5 Figure 145 draw the *same* collection, and in both
+ * the `Polyline Segment Index Count > 0` guard encloses the index loop **and** the `VecF32
+ * Polyline Vertex Coords` (read from both page images; DESIGN.md delta 36 corrected). NX 10.5
+ * disagrees with both documents and writes the empty vector anyway, so which form was seen is
+ * carried by [PmiTextPolylineData.vertexCoords] being `null` versus empty and the writer
+ * reproduces it exactly.
+ *
+ * spec: Figure 126 / 9.5 Figure 145
+ */
+internal fun readPmiTextPolylineData(
+    r: ByteReader,
+    form: Pmi95TextPolylineForm,
+): PmiTextPolylineData {
+    val count = r.readCount("Text Polyline Segment Index", 2)
+    val indices = List(count) { r.readI16() }
+    val coords = if (count > 0 || form == Pmi95TextPolylineForm.EMPTY_VECTOR) r.readVecF32() else null
+    return PmiTextPolylineData(indices, coords)
+}
 
-private fun writePmiTextPolylineData(
+internal fun writePmiTextPolylineData(
     w: ByteWriter,
     data: PmiTextPolylineData,
 ) {
     w.writeVecI16(data.segmentIndices)
-    w.writeVecF32(data.vertexCoords)
+    data.vertexCoords?.let { w.writeVecF32(it) }
 }
 
 // spec: Figure 128
@@ -494,17 +522,28 @@ private fun writePmiNonTextPolylineData(
     w.writeVecF32(data.vertexCoords)
 }
 
-// spec: Figure 123
-private fun readPmi2dText(
+/**
+ * 2D Text Data — v10 Figure 123 and 9.5 Figure 142 are field for field identical (9.5 titles the
+ * two spare words "Reserved Field" where v10 says "Empty Field"), so both generations share this
+ * codec. String IDs are validated by the caller, because 9.5 reads its String Table *after* the
+ * entities that index into it.
+ *
+ * spec: Figure 123 / 9.5 Figure 142
+ */
+internal fun readPmi2dText(
     r: ByteReader,
-    stringCount: Int,
-): Pmi2dText {
-    val stringId = r.readI32()
-    checkStringId(stringId, stringCount, "2D Text")
-    return Pmi2dText(stringId, r.readI32(), r.readI32(), r.readF32(), readPmiTextBox(r), readPmiTextPolylineData(r))
-}
+    form: Pmi95TextPolylineForm,
+): Pmi2dText =
+    Pmi2dText(
+        r.readI32(),
+        r.readI32(),
+        r.readI32(),
+        r.readF32(),
+        readPmiTextBox(r),
+        readPmiTextPolylineData(r, form),
+    )
 
-private fun writePmi2dText(
+internal fun writePmi2dText(
     w: ByteWriter,
     text: Pmi2dText,
 ) {
@@ -542,7 +581,15 @@ private fun readPmi2dData(
 ): Pmi2dData {
     val base = readPmiBaseData(r)
     val textCount = r.readCount("2D Text Data", 44)
-    val texts = List(textCount) { readPmi2dText(r, stringCount) }
+    // Delta 36: NX 10.5 writes the empty coordinate vector even where Figure 126's guard
+    // excludes it, and every 2D Text Data record of all 14 NIST bodies is a fixed 48 bytes
+    // because of it. That is the v10 reading until a v10 producer contradicts it.
+    val texts =
+        List(textCount) {
+            readPmi2dText(r, Pmi95TextPolylineForm.EMPTY_VECTOR).also {
+                checkStringId(it.stringId, stringCount, "2D Text")
+            }
+        }
     return Pmi2dData(base, texts, readPmiNonTextPolylineData(r))
 }
 

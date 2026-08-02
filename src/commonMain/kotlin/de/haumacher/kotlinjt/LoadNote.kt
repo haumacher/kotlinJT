@@ -275,6 +275,40 @@ sealed class LoadNote {
             get() = "$location: $byteCount bytes after the PMI font block are not documented by Figure 110; preserved verbatim"
     }
 
+    /**
+     * A JT 9.5 PMI Manager writes Figure 145's `VecF32 Polyline Vertex Coords` where the
+     * `Polyline Segment Index Count` is zero and the figure's guard excludes it — the form NX
+     * writes in v10 (DESIGN.md delta 36). Accepted, resolved from the body's exact extent rather
+     * than assumed, and recorded on the element so re-serialization stays byte-identical.
+     */
+    data class PmiTextPolylineVectorOffDocument(
+        val location: String,
+    ) : LoadNote() {
+        override val name: String get() = "PMI_TEXT_POLYLINE_VECTOR_OFF_DOCUMENT"
+        override val message: String
+            get() =
+                "$location: text polylines with a zero segment index count still carry an empty " +
+                    "VecF32 that 9.5 Figure 145's guard excludes; accepted and recorded"
+    }
+
+    /**
+     * A JT 9.5 PMI Polygon Data element sets `TextureBinding`, where Figure 170 and its own
+     * prose disagree about what follows: the figure labels the box `I16 : Reserved Field`, p.201
+     * says `VecF32: Texture Coords`. The prose is followed (it is internally consistent and
+     * matches v10's Figure 130) and the deviation is named, so the first fixture to exercise the
+     * branch settles it instead of passing silently.
+     */
+    data class PmiPolygonTextureBindingUnsettled(
+        val location: String,
+        val elementCount: Int,
+    ) : LoadNote() {
+        override val name: String get() = "PMI_POLYGON_TEXTURE_BINDING_UNSETTLED"
+        override val message: String
+            get() =
+                "$location: $elementCount JT 9.5 PolygonData element(s) set TextureBinding, where Figure 170 " +
+                    "(I16 Reserved Field) and §7.2.6.2.8's prose (VecF32 Texture Coords) disagree; the prose is followed"
+    }
+
     /** An LSG stream that ends after its element lists without a Property Table. */
     data class PropertyTableMissing(
         val detail: String,

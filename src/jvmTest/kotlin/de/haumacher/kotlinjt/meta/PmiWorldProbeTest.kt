@@ -174,15 +174,20 @@ class PmiWorldProbeTest {
                             text.textBox.lowerRightY.assertFinite("text box lower-right y")
                             text.textBox.upperLeftX.assertFinite("text box upper-left x")
                             val poly = text.polylines
+                            // Delta 36: NX 10.5 writes the coordinate vector even where Figure
+                            // 126's guard excludes it, so a v10 body never yields the null form.
+                            val coords =
+                                poly.vertexCoords
+                                    ?: throw AssertionError("delta 36: a v10 text polyline omitted its VecF32")
                             for (index in poly.segmentIndices) {
                                 assertTrue(
-                                    index >= 0 && index * 2 + 1 < poly.vertexCoords.size,
+                                    index >= 0 && index * 2 + 1 < coords.size,
                                     "text polyline vertex index $index out of bounds for " +
-                                        "${poly.vertexCoords.size} packed floats",
+                                        "${coords.size} packed floats",
                                 )
                             }
-                            poly.vertexCoords.forEach { it.assertFinite("text polyline coordinate") }
-                            textVertices += poly.vertexCoords.size / 2
+                            coords.forEach { it.assertFinite("text polyline coordinate") }
+                            textVertices += coords.size / 2
                         }
                         entity.data2d.nonTextPolylines.vertexCoords.forEach { it.assertFinite("non-text polyline coordinate") }
                     }
