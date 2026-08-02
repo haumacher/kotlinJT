@@ -254,21 +254,31 @@ vectors have their length fixed by `Analytic Surface Count`, and the four `VecF6
 count-plus-values vectors written "in binary form" (no quantizer, no predictor, no hash). The
 element decode is strict and fully consuming, so a producer that contradicts the derivation gets an
 opaque carry with a named note (`LWPA_STRUCTURE_UNRECOGNIZED` / `ELEMENT_DECODE_FAILED`), never a
-misread. The JT 9 generation stays opaque-by-policy: the v9.5 reference lists segment type 24 in its
-Table 3 but documents no LWPA *element* at all.
+misread.
+
+**The JT 9 generation decodes too, as of package P7.** This paragraph used to say that the v9.5
+reference "lists segment type 24 in its Table 3 but documents no LWPA *element* at all". **That was
+false.** JT 9.5 Rev-D §7.2.9.1 gives the element its Object Type ID, its prose and **Figure 215**,
+and Annex A Table 11 lists it under *Types Stored Within JT LWPA Segment (Segment Type = 24)* with
+the same GUID this library already carried. The JT 9 layout is Figure 215 + Figure 216: `I16`
+Version Number where v10 has `U8` (the one delta that moves a byte boundary), `I32` counts where
+v10 has `U32` (four bytes either way; only the sign of the high bit differs), and the Mk. 2
+`Int32CDP2` packet where v10 uses its third-generation `Int32CDP`. Nothing in the element reaches
+`Float64CDP` or the Mk. 1 packet — its four F64 arrays are bare `VecF64`. The 9.5 rows live in
+`SPEC_COVERAGE_95.md` package G section E.
 
 | Section | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | JT LWPA Segment (p.115) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest | element list + the Figure-78 trailer, same seam as §7/§10/§11; spec-derived, no fixture |
-| JT LWPA Element (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .lwpaElementWithoutAnalyticSurfacesStopsAfterTheCounts | spec-derived; V9 opaque-with-note (no v9 element documented) |
-| Analytic Surface Geometry (p.117) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .aSurfaceTypeOutsideTableOneHundredRefuses | spec-derived; surface types validated against Table 100 (0..5; 6/7 reserved) |
+| JT LWPA Element (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .lwpaElementWithoutAnalyticSurfacesStopsAfterTheCounts | spec-derived; the JT 9 layout decodes too (9.5 Fig. 215 — see `SPEC_COVERAGE_95.md` package G) |
+| Analytic Surface Geometry (p.117) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .aSurfaceTypeOutsideTheSupportedTableRefuses | spec-derived; surface types validated against Table 100 (0..5; 6/7 reserved), whose 9.5 twin is value-identical |
 
 | Figure | Read | Write | Evidence (tests) | Notes |
 |---|---|---|---|---|
 | Fig. 99 — JT LWPA Segment data collection (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest | spec-derived |
 | Fig. 100 — JT LWPA Element data collection (p.116) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .moreAnalyticSurfacesThanSurfacesRefuses | spec-derived; the `Analytic Surface Count > 0` conditional is pinned both ways |
 | Fig. 101 — Analytic Surface Geometry data collection (p.117) | done | n/a: `writeJt` authors no LWPA | LwpaDocumentTest.lwpaElementWithAnalyticSurfacesDecodes, .anIndexVectorContradictingTheAnalyticCountRefuses | spec-derived; `VecF64` = plain count + values (§4.2 Symbols table) |
-| Fig. 102 — Analytic Surface Creation (p.119) | n/a | n/a | | flow chart, not a byte layout: it says how many numbers each surface type *consumes* from the four arrays. Building that projection is a recorded deferral — its time comes with a consumer that needs analytic surfaces (DESIGN.md) |
+| Fig. 102 — Analytic Surface Creation (p.119) | n/a | n/a | | flow chart, not a byte layout: it says how many numbers each surface type *consumes* from the four arrays. Building that projection is a recorded deferral — its time comes with a consumer that needs analytic surfaces (DESIGN.md). 9.5 Figure 217 is the same chart box for box, so the deferral has two citations |
 
 
 ## §10 Wireframe Segment

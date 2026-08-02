@@ -221,9 +221,12 @@ What that pass did to the deltas recorded below:
   *element*, gated on local version 2, not inside Base Light Data (delta 45) · State Flags bit
   `0x01` and the field-inhibit bit assignments differ in meaning between the generations
   (delta 46).
-- **Refuted as a claim, though the behaviour stands:** the statement in `LwpaDocument.kt`, this
-  file and `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It
-  does — §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries.
+- **Refuted, and then acted on (package P7):** the statement in `LwpaDocument.kt`, this file and
+  `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It does —
+  §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries. All
+  three statements are struck, and the JT 9 element now decodes: see delta 47 and *§9 LWPA*
+  below. The opaque carry had been *defensible behaviour resting on a false reason*, and the
+  false reason was what made the deferral look permanent.
 
 Deltas below are left as originally written; where the pass changed their status, the list above
 is the authority.
@@ -471,6 +474,39 @@ table) and pinned by the v9 halves of the per-figure codec tests.
     shape of shift affects Texture Image (9.5 puts Internal Compression Level on bit 8 with
     bit 7 unused, v10 on bit 7). The inhibit word is therefore carried verbatim and never
     interpreted; any future interpretation must branch on the generation.
+
+47. **The JT LWPA Element: one width delta that moves a byte, two that do not, and one codec
+    swap.** (Package P7, 9.5 Fig. 215/216 against v10 Fig. 100/101, both rendered.) The two
+    figures draw the same four fields in the same order under the same single
+    `Analytic Surface Count > 0` guard, and Figure 216/101 hold the same six members with the
+    same predictors (`Lag1` on the Analytic Surface Indices, `NULL` on the Analytic Surface
+    Type). The deltas:
+    - **`I16 : Version Number` in 9.5, `U8` in v10** — the pervasive generational delta
+      (delta 6), and here the *only* one that shifts a byte boundary. A 9.5 element read the
+      v10 way desynchronizes at the Surface Count and never recovers; the library refuses it
+      by name, which `LwpaDocumentTest.aJt9BodyReadTheV10WayIsRefusedByName` pins by feeding
+      one frame to both readers.
+    - **`I32` vs `U32` on Surface Count and Analytic Surface Count** — four bytes in both, so
+      this is a *signedness* delta, not a width one. The model keeps a `UInt` for both
+      generations and the 9.5 read refuses a negative value by name rather than laundering it
+      into four billion surfaces.
+    - **`Int32CDP2` (9.5 §8.1.2, "Mk. 2") vs `Int32CDP` (v10 §12.1.1, third generation)** on
+      the two index vectors. The two packets agree byte for byte in their CODEC-0 form, so the
+      swap only bites on an entropy-coded packet — which is what
+      `LwpaDocumentTest.jt9AnalyticSurfaceVectorsUseTheMk2Packet` exercises, with a Bitlength
+      CodeText whose 25 bits mean `[1, 2, 4]` under 9.5's 6+6-bit min/max grammar and nothing
+      coherent under v10's nibble-encoded one.
+
+    **Nothing in the element reaches a codec the library lacks.** Figure 216's four F64 arrays
+    are Table 2's *bare* `VecF64` — an `I32` count and plain doubles "written in binary form" —
+    not `VecF64{Float64CDP}`. So the two 9.5-only codec families that gate the JT 9 B-Rep and
+    the JT 9 wireframe curve payload (`Float64CDP` §8.1.3 and Int32 CDP Mk. 1 §8.1.1, neither
+    implemented) are simply not on this path. That is why LWPA landed ahead of them.
+
+    The *Supported Surface Type* value set (0 Nurbs … 5 Torus, 6/7 Reserved) is value-identical
+    in both documents; 9.5 leaves its table unnumbered on p.210, v10 numbers it Table 100. And
+    the Analytic Surface Creation flow chart is 9.5 Figure 217 == v10 **Figure 102**, box for
+    box — both revisions print it, and the projection it describes stays a recorded deferral.
 
 ## Layer 1: Shape LOD bodies (issue #4)
 
@@ -1420,19 +1456,39 @@ each symbol selected, and the Int32 and Int64 layers map indices to values — w
 move-to-front (1) codecs; its null and chopper forms are spec-derived, their layout fixed by
 Figure 135 exactly as the fixture-verified Int32 forms.
 
-### §9 LWPA: decoded, spec-derived, and honest about it
+### §9 LWPA: decoded in both generations, spec-derived, and honest about it
 
-No fixture carries a JT LWPA segment. `de.haumacher.kotlinjt.lwpa` decodes it anyway because
-Figures 100 and 101 leave nothing to infer: the two `VecI32{Int32CDP}` vectors have their length
-fixed by `Analytic Surface Count`, and the four `VecF64` arrays are plain count-plus-values vectors
-written "in binary form" — no quantizer, no predictor, no hash, no conditional. Surface types are
-validated against Table 100 (which §9 borrows from Annex G: 0 Nurbs, 1 Plane, 2 Cylinder, 3 Cone,
-4 Sphere, 5 Torus, 6/7 reserved), and the element body must consume to its declared length, so a
-producer that contradicts the derivation gets an opaque carry with a named note. The JT 9
-generation is opaque-by-policy: the v9.5 reference lists segment type 24 in its Table 3 but
-documents no LWPA *element* at all. Figure 102 (Analytic Surface Creation) is a flow chart saying
-how many numbers each surface type consumes from the four arrays; building that projection waits
-for a consumer.
+No fixture carries a JT LWPA segment — **in either generation**, which is the defining constraint
+of this whole area. `de.haumacher.kotlinjt.lwpa` decodes it anyway because the figures leave
+nothing to infer: the two `VecI32` vectors have their length fixed by `Analytic Surface Count`, and
+the four `VecF64` arrays are plain count-plus-values vectors written "in binary form" — no
+quantizer, no predictor, no hash, no conditional. Surface types are validated against the
+*Supported Surface Type* set (0 Nurbs, 1 Plane, 2 Cylinder, 3 Cone, 4 Sphere, 5 Torus, 6/7
+reserved — v10's Table 100, and 9.5's value-identical unnumbered twin on p.210), and the element
+body must consume to its declared length, so a producer that contradicts the derivation gets an
+opaque carry with a named note.
+
+**The JT 9 generation decodes too, as of package P7** (delta 47). It used to be
+"opaque-by-policy", and the policy rested on a false statement — that the v9.5 reference lists
+segment type 24 in its Table 3 but documents no LWPA *element*. It documents one: §7.2.9.1,
+Figure 215, Annex A Table 11. The reader dispatches on `LsgGeneration` for the `I16`-vs-`U8`
+version, the `I32`-vs-`U32` counts and the `Int32CDP2`-vs-`Int32CDP` packet; the writer emits back
+the dialect the document was read in, so re-serialization stays byte-exact. Nothing on this path
+needs `Float64CDP` or the Mk. 1 Int32 packet.
+
+**How a spec-only decode is held to account.** With no fixture, round-trip on hand-built frames is
+the strongest proof available, and it is applied to *every* frame the tests build, including both
+states of the one `Analytic Surface Count > 0` guard. Beyond byte counts the tests assert meaning:
+that the `I16` version reads as one number rather than a reinterpreted byte pair (a frame carrying
+version `0x0101`, whose two equal bytes make the byte order irrelevant), that the same bytes the
+JT 9 reader accepts are *refused by name* by the v10 reader and vice versa, that `Lag1` is applied
+and not merely recorded (five surfaces, because the predictor only bites past four primers), and
+that a body one byte short or one byte long earns `ELEMENT_DECODE_FAILED` and an exact opaque carry
+rather than an exception out of the API.
+
+The Analytic Surface Creation flow chart — v10 Figure 102, 9.5 Figure 217, the same chart box for
+box — says how many numbers each surface type consumes from the four arrays; building that
+projection waits for a consumer.
 
 ### §8: opacity proven, not declared
 
@@ -1617,7 +1673,7 @@ Recorded observations from the same evidence:
 | Per-part units precedence (lowest node wins) for mixed-unit files | first real fixture declaring conflicting units (today: `SCENE_UNITS_MIXED` + `UNSPECIFIED`, never a guess) |
 | Force/final/field-inhibit attribute accumulation in the scene | first real fixture using them (today: named note `SCENE_ATTRIBUTE_SEMANTICS_UNSUPPORTED`; both fixtures use plain accumulation) |
 | The **full** NURBS knot vector of a wireframe curve (and of a trivial one at all) | a consumer needs to *evaluate* curves. §12.1.13 prints the interior-filling step of its reconstruction sketch only for the `[x1:x2]` Table-68 categories, and for a **trivial** knot vector it gives only the two defining cases and no reconstruction — so a full vector would be part inference. Today the model exposes the stored values with their category, and validates their count against the formula that *is* printed |
-| Figure 102's Analytic Surface Creation projection (turning LWPA's four `VecF64` arrays into planes, cylinders, cones, spheres and tori) | a consumer needs analytic surfaces — **and** the first fixture carrying an LWPA segment, since the whole §9 decode is spec-derived today |
+| The Analytic Surface Creation projection (v10 Figure 102 == 9.5 Figure 217: turning LWPA's four `VecF64` arrays into planes, cylinders, cones, spheres and tori) | a consumer needs analytic surfaces — **and** the first fixture carrying an LWPA segment, since the whole LWPA decode is spec-derived in both generations today |
 | Reading the body of an undefined-type segment (NX 10.5's types 23 and 31) | for **23**: its element GUID appearing in a documented figure, or documentation of the type. For **31**: nothing is blocked — its elements are documented String Property Atoms — but what the *segment type* is for is not, so no typed document claims it. Both are preserved verbatim today, with everything the bytes prove recorded in `UndefinedSegmentTypeTest` |
 | Decoding B-rep (JT B-rep, XT, MultiXT, ULP, STEP) | **a doctrine reversal**, not a package: issue #1 rule 3 makes opacity deliberate, and `BrepOpacityTest` proves it is carriage rather than loss. A reversal belongs to the user and would be recorded here with the old rationale quoted |
 | The JT 9 generation of the Wireframe Rep Element (v9.5 Figure 130: I16 version, Lag1 index vectors, "Mk. 2" CDPs throughout the curve data) | the first v9 fixture carrying a Wireframe segment (today: opaque with `ELEMENT_LAYOUT_UNVERIFIED`) |

@@ -151,6 +151,23 @@ enforces: **a byte-neutral defect needs a test that asserts meaning** — every 
 verified red-before-green by reverting it and watching a named test fail, because a byte count
 never would have. Package C's Evidence column is now filled in.
 
+**P7 — the 9.5 JT LWPA element** (package G's Figs. 214–217, finding G-1). The library carried JT 9
+LWPA elements opaquely and justified it in three places with a statement that was simply false —
+that the 9.5 reference documents no JT LWPA Element. It documents one in §7.2.9.1, with Figure 215,
+a GUID and an Annex A Table 11 row under segment type 24. The behaviour was defensible; the reason
+was not, and it hid how cheap the decode is. Both generations now decode. The deltas, re-derived
+from the rendered pages rather than taken from the finding: **`I16` vs `U8` Version Number is the
+only one that moves a byte boundary** (the two counts are four bytes in both, `I32` against `U32`,
+differing only in whether the high bit is a sign), and Figure 216 names the Mk. 2 `Int32CDP2`
+packet where Figure 101 names the third-generation `Int32CDP`. **No codec blocks it**: Figure 216's
+four F64 arrays are Table 2's *bare* `VecF64`, so neither `Float64CDP` (G-2) nor Int32 CDP Mk. 1
+(G-3) is reachable from an LWPA element — those still gate the JT 9 B-Rep and wireframe curve
+payloads, and nothing here changes their cost. Package G's section E now carries the Evidence
+column, and every row in it is graded `spec` — permanently, until the corpus acquires a file with
+an LWPA segment. Two record corrections fell out of the re-derivation: v10 *does* number the
+Analytic Surface Creation chart (Figure 102, p.119), and the *Supported Surface Type* table is
+9.5's own unnumbered table on p.210, not a borrowing that only v10 defines.
+
 ---
 
 # Phase 1 result
@@ -232,7 +249,8 @@ library's least-grounded decoder is now its best-cited one) · delta 36 (Figure 
 delta 37 (confirmed v10-only, so the code was already right) · the claim in
 `LwpaDocument.kt:288`, `DESIGN.md:1036` and `SPEC_COVERAGE.md:258` that 9.5 does not document a
 JT LWPA Element — it does, §7.2.9.1 with a GUID and Fig. 215, under segment type 24, with the
-exact GUID `ObjectTypeIds.kt:89` already carries.
+exact GUID `ObjectTypeIds.kt:89` already carries. *(All three statements struck by package P7,
+which also decoded the element.)*
 
 **Refuted risks** — two suspected problems do not exist, which is worth as much as a finding:
 9.5's Property Value Type set is exactly v10's Table 53, so `META_PROPERTY_VALUE_TYPE_UNKNOWN`
@@ -258,7 +276,11 @@ Two deferrals were mis-costed in the existing record, both upward:
   formula still sums fifteen entity counts, twelve of which v10 no longer defines. 9.5 PMI is not
   a flagged reuse of the v10 codecs.
 
-And one downward: **9.5 LWPA decode** is `small` — three width swaps and one codec swap.
+And one downward: **9.5 LWPA decode** is `small` — three width swaps and one codec swap. *(Landed
+as P7. The estimate held, and the re-derivation sharpened it: of the three width swaps only the
+Version Number moves a byte boundary; the two counts are four bytes in both revisions and differ
+in signedness alone. The element reaches neither `Float64CDP` nor Mk. 1, so it was never behind
+the CDP gate.)*
 
 # Phase 2 — implementation packages
 
@@ -271,13 +293,14 @@ Ordered by value against what real 9.5 files contain, not by document order.
 | **P3** | Polyline/Point Set Shape **LOD** bodies, 9.5 layout | [#12](https://github.com/haumacher/kotlinJT/issues/12) | small | Second half. Six deltas from the v10 reader; the NULL-vs-Lag1 predictor is settled by a stored hash, and the point set's FGPV hash omits the face-group term |
 | **P4** | LSG model-correctness sweep | B-2, B-6, C-F2, C-F7/F8/F9, A-1/A-2 | small | Every one spec-cited, every one currently silent-wrong rather than noisy-wrong |
 | **P5** | The all-out-of-band arithmetic packet | H-5 | trivial | Four lines; the v10 path already does it |
-| **P6** | 9.5 LWPA decode | G-1 | small | Newly cheap, and it removes a false statement from three files |
-| **P7** | Int32 CDP **Mk. 1** and `Float64CDP` | H-2, H-3, G-2/G-3 | large | Gates JT 9 B-Rep, LWPA curve data, NURBS and the Primitive Set path. Nothing below it decodes without it |
+| **P6** | 9.5 LWPA decode — **landed as P7** (see *Landed so far*) | G-1 | small | Newly cheap, and it removes a false statement from three files |
+| **P7** | Int32 CDP **Mk. 1** and `Float64CDP` — **renumber to P8**; the LWPA package took the P7 slot | H-2, H-3, G-2/G-3 | large | Gates JT 9 B-Rep and the JT 9 wireframe curve payload, NURBS and the Primitive Set path. **Not** the LWPA element, which reaches neither codec |
 | **P8** | 9.5 PMI | F-1, F-5, F-8, F-10, F-12 | large | Genuine restructuring; needs its own ledger pass |
 | **P9** | Writer strictness | [#15](https://github.com/haumacher/kotlinJT/issues/15) | small | The strict half of the doctrine, and a v10 conformance bug in shipping code |
 
-P1–P3 are one session's work and close both open 9.5 bugs. P7 is the gate for everything
-precise-geometry-shaped and should be scheduled as its own milestone.
+P1–P3 are one session's work and close both open 9.5 bugs. The CDP package (P7 in the table,
+renumbered P8) is the gate for everything precise-geometry-shaped and should be scheduled as its
+own milestone — LWPA turned out **not** to be behind that gate.
 
 ---
 
@@ -717,16 +740,24 @@ authoring entry throughout — `writeJt` authors no §11 segment in any generati
 | Fig. 212 — MCS Curve Recovery from Surface Geometry (p.248) | Fig. 236 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
 | Fig. 213 — PCS Curve Recovery from MCS Curve and Surface Geometry (p.249) | **none** — v10's Annex G ends at Fig. 236 | `9.5-only` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | v10 has no figure for this recovery step; whether it dropped the *step* or only the *picture* is `spec unclear` |
 
-### E. §7.2.9 JT LWPA Segment (p.249–252) — **full field-by-field**
+### E. §7.2.9 JT LWPA Segment (p.249–252) — **full field-by-field**, and **implemented** (package P7)
 
-| 9.5 unit | v10 counterpart | Delta | Read | Write | Code | Notes |
-|---|---|---|---|---|---|---|
-| §7.2.9 JT LWPA Segment (p.249) — Table 3 type 24, ZLIB=Yes | §9; Table 6 type 24 | `identical` | `done` (framing) | `n/a: writer emits v10` | `SegmentKind.kt:30`, `LwpaDocument.kt:253` | |
-| Fig. 214 — JT LWPA Segment data collection (p.249) | Fig. 99 | `identical` — Segment Header, JT LWPA Element | `done` | `n/a: byte-faithful carry` | `LwpaDocument.kt:186` | |
-| §7.2.9.1 Object Type ID `0xd67f8ea8,0xf524,0x4879,0x92,0x8c,0x4c,0x3a,0x56,0x1f,0xb9,0x3a` (p.249) | §9.1, same GUID | `identical`; also listed in 9.5 Annex A Table 11 under "Types Stored Within JT LWPA Segment (Segment Type = 24)" | `done` (named) | `n/a` | `ObjectTypeIds.kt:89`, `:156` | **contradicts a code comment and DESIGN.md** — Finding 1 |
-| Fig. 215 — JT LWPA Element data collection (p.250) | Fig. 100 | `widths`, three of them, checked field by field: `I16 : Version Number` (9.5) vs `U8` (v10); `I32 : Surface Count` vs `U32`; `I32 : Analytic Surface Count` vs `U32`. Field order, names and the single `Analytic Surface Count > 0` guard are **identical** | `opaque` (V9 refused by policy) | `n/a: byte-faithful carry` | `LwpaDocument.kt:290` (the V9 refusal), `:308` (the v10 reader) | 9.5: only version 1. Finding 1 |
-| Fig. 216 — Analytic Surface Geometry (p.251) | Fig. 101 | `structural` (codec generation only): the six members, their order, their predictors (`Lag1` on Indices, `NULL` on Type) and the four plain `VecF64` arrays are **identical**. The one delta: 9.5 writes `Int32CDP2` (the "Mk. 2" packet, §8.1.2) where v10 writes `Int32CDP` (the third-generation packet, §12.1.1) | `opaque` (V9) / `done` (v10) | `n/a: byte-faithful carry` | `LwpaDocument.kt:76-104` | **a 9.5 LWPA element is 12 lines of work away** — Finding 1 |
-| Fig. 217 — Analytic Surface Creation (p.252) | (v10's unnumbered "Analytic Surface Creation" flow chart in §9.1.1) | `identical` (flow chart; both give the same plane/cylinder/cone/sphere/torus consumption rules). 9.5 numbers it, v10 does not | `n/a: derivation, no bytes` | `n/a` | — | the projection it describes is a recorded deferral in DESIGN.md |
+*(This section carries the `Evidence` column; the rest of package G is still Phase-1 shaped and
+grows it as its own implementation packages land. **Every row here is graded `spec`, and none can
+ever be anything else until the corpus acquires an LWPA file**: no fixture carries a JT LWPA
+segment in either generation, which is the defining constraint of this package. Round-trip on
+hand-built frames is the strongest proof available and is applied to every frame, both states of
+the one guard included.)*
+
+| 9.5 unit | v10 counterpart | Delta | Evidence | Read | Write | Code | Notes |
+|---|---|---|---|---|---|---|---|
+| §7.2.9 JT LWPA Segment (p.249) — Table 3 type 24, ZLIB=Yes | §9; Table 6 type 24 | `identical` | `spec` | `done` (framing) | `n/a: writer emits v10` | `SegmentKind.kt:30`, `LwpaDocument.kt` (`lwpaSegments`) | Compression column agrees; 9.5 says ZLIB, v10 says LZMA, and Layer 0 dispatches on the algorithm byte either way |
+| Fig. 214 — JT LWPA Segment data collection (p.249) | Fig. 99 | `identical` — Segment Header, JT LWPA Element | `spec` | `done` | `n/a: byte-faithful carry` | `LwpaDocument.decode` | `LwpaDocumentTest.aForeignNamedElementTypeIsCarriedOpaquelyWithANote` (a named type with no documented place under segment type 24 is carried opaquely in both generations), `.anUnknownElementTypeIsCarriedOpaquelyWithANote` |
+| §7.2.9.1 Object Type ID `0xd67f8ea8,0xf524,0x4879,0x92,0x8c,0x4c,0x3a,0x56,0x1f,0xb9,0x3a` (p.249) | §9.1, same GUID | `identical`; also listed in 9.5 Annex A Table 11 under "Types Stored Within JT LWPA Segment (Segment Type = 24)" | `spec` | `done` (named **and decoded**) | `n/a` | `ObjectTypeIds.kt:89`, `:156` | Finding 1's correction: the element *is* documented in 9.5. The false statement is gone from `LwpaDocument.kt`, `DESIGN.md` and `SPEC_COVERAGE.md` |
+| Fig. 215 — JT LWPA Element data collection (p.250) | Fig. 100 | `widths`, three of them, checked field by field against both rendered figures: `I16 : Version Number` (9.5) vs `U8` (v10); `I32 : Surface Count` vs `U32`; `I32 : Analytic Surface Count` vs `U32`. Field order, names and the single `Analytic Surface Count > 0` guard are **identical**. **Only the version delta moves a byte boundary** — the two counts are four bytes in both, differing in signedness alone — and it moves every later field | `spec` | `done` (both generations) | `n/a: writer emits v10` (re-serialization is `done` in the dialect the document was read in) | `LwpaDocument.kt` (`readJtLwpaElement`, `readLwpaVersion`, `readLwpaCount`) | 9.5: "Version numbers '1' is currently supported"; nothing in the figure is guarded on it, so the reader stays lenient about the value. Tests: `LwpaDocumentTest.jt9LwpaElementWithAnalyticSurfacesDecodes`, `.jt9LwpaElementWithoutAnalyticSurfacesStopsAfterTheCounts` (guard off, 35-byte frame), `.jt9VersionNumberIsOneI16NotAReinterpretedBytePair`, `.aJt9BodyReadTheV10WayIsRefusedByName`, `.aJt9BodyOneByteShortIsRefusedByName`, `.aJt9BodyWithATrailingByteIsRefusedByName`, `.aJt9NegativeSurfaceCountIsRefusedByName` |
+| Fig. 216 — Analytic Surface Geometry (p.251) | Fig. 101 | `structural` (codec generation only): the six members, their order, their predictors (`Lag1` on Indices, `NULL` on Type) and the four **bare** `VecF64` arrays are **identical** — re-verified on the rendered pages. The one delta: 9.5 writes `Int32CDP2` (the Mk. 2 packet, §8.1.2) where v10 writes `Int32CDP` (the third-generation packet, §12.1.1) | `spec` | `done` (both generations) | `n/a: byte-faithful carry` | `LwpaDocument.kt` (`AnalyticSurfaceGeometry.read`) | **No `Float64CDP` anywhere in this collection** — the F64 arrays are Table 2's bare `VecF64`, an `I32` count plus plain doubles "written in binary form", so finding 2's blocker does not reach LWPA. Tests: `LwpaDocumentTest.jt9AnalyticSurfaceVectorsUseTheMk2Packet` (a Bitlength packet whose 25 bits mean `[1,2,4]` to Mk. 2 and nothing coherent to gen-3), `.jt9AnalyticSurfaceIndicesAreLag1Predicted`, `.aSurfaceTypeOutsideTheSupportedTableRefuses`, `.anIndexVectorContradictingTheAnalyticCountRefuses` |
+| *Supported Surface Type* table (p.210, unnumbered) — borrowed by §7.2.9.1.1 | Table 100 (JT ULP), borrowed by v10 §9.1.1 | `identical` — 0 Nurbs, 1 Plane, 2 Cylinder, 3 Cone, 4 Sphere, 5 Torus, 6/7 Reserved; 9.5 leaves the table unnumbered, v10 numbers it | `spec` | `done` | `n/a` | `AnalyticSurfaceType` | one enum serves both generations; a reserved or out-of-table code refuses by name rather than running Figure 217's consumption rules on an unknown type |
+| Fig. 217 — Analytic Surface Creation (p.252) | **Fig. 102** (v10 p.119) | `identical`, checked box for box on both rendered pages: same `k=0` initialisation over all four float arrays, same `pvec` / `axis` / `x_axis` triples off the Coordinate and Axis Arrays, same cylinder→radius, cone→radius+`semi_angle` (the only reader of the Radian Array), sphere→radius, torus→major+minor radius, same loop back through *Any surface left*. A **plane** consumes nothing beyond the three vectors in either revision | `spec` | `n/a: derivation, no bytes` | `n/a` | — | **Correction to finding G-1**, which called v10's chart unnumbered: v10 numbers it Figure 102 and prints it in full. The projection it describes is a recorded deferral in DESIGN.md; both revisions state it identically, so the deferral has two citations rather than one |
 
 ### F. §9 Best Practices — §9.10 Brep Face Group Associations (p.300)
 
