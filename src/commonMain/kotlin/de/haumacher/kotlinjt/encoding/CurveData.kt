@@ -53,11 +53,16 @@ enum class KnotType(val index: Int) {
 }
 
 /**
- * *Compressed Entity List for Non-Trivial Knot Vector* (§12.1.13, Figure 148): a four-entry
- * flag vector (Table 68) followed by one `VecI32{Int32CDP, Lag1}` list of entity indices per
- * set flag. The flag vector's length is fixed at four by the spec ("Currently there are four
- * knot vector types, so this Entities of Knot Type Exist Flags vector should be of length
- * four") and validated as such.
+ * *Compressed Entity List for Non-Trivial Knot Vector* (v10 §12.1.13 Figure 148 == 9.5 §8.1.13
+ * Figure 236): a four-entry flag vector (Table 68) followed by one entity-index list per set
+ * flag. The flag vector's length is fixed at four by the spec ("Currently there are four knot
+ * vector types, so this Entities of Knot Type Exist Flags vector should be of length four") and
+ * validated as such.
+ *
+ * The two generations draw the same boxes and differ only in what fills them: v10 writes
+ * `VecI32{Int32CDP, Lag1}` (its third-generation packet), 9.5 `VecI32{Int32CDP, `**`Stride1`**`}`
+ * with the Mk. 1 packet of §8.1.1. [read] and [read95] are the two entry points; nothing in the
+ * bytes chooses between them.
  */
 data class NonTrivialKnotVectorEntityList(
     /** The exist flags exactly as read (four entries in every conforming file). */
@@ -68,7 +73,7 @@ data class NonTrivialKnotVectorEntityList(
     /** One knot-type category with the entity indices that belong to it. */
     data class Entry(
         val knotType: KnotType,
-        val indices: Int32Vector,
+        val indices: IntVectorField,
     )
 
     fun encode(w: ByteWriter) {
@@ -82,6 +87,18 @@ data class NonTrivialKnotVectorEntityList(
         internal fun read(
             r: ByteReader,
             externallyCompressed: Boolean,
+        ): NonTrivialKnotVectorEntityList =
+            read(r) {
+                Int32Vector(Int32Cdp.readV10(it, externallyCompressed = externallyCompressed), Predictor.LAG1)
+            }
+
+        // spec: 9.5 Figure 236
+        internal fun read95(r: ByteReader): NonTrivialKnotVectorEntityList =
+            read(r) { Int32VectorMk1(Int32CdpMk1.read(it), Predictor.STRIDE1) }
+
+        private fun read(
+            r: ByteReader,
+            indices: (ByteReader) -> IntVectorField,
         ): NonTrivialKnotVectorEntityList {
             val flagCount = r.readI32()
             if (flagCount != 4) {
@@ -92,13 +109,7 @@ data class NonTrivialKnotVectorEntityList(
             for ((index, flag) in flags.withIndex()) {
                 when (flag) {
                     0 -> Unit
-                    1 ->
-                        entries.add(
-                            Entry(
-                                KnotType.ofIndex(index),
-                                Int32Vector(Int32Cdp.readV10(r, externallyCompressed = externallyCompressed), Predictor.LAG1),
-                            ),
-                        )
+                    1 -> entries.add(Entry(KnotType.ofIndex(index), indices(r)))
                     else -> throw JtFormatException("Knot Type Exist Flag[$index] is $flag, Table 68 defines 0 and 1")
                 }
             }
@@ -108,15 +119,20 @@ data class NonTrivialKnotVectorEntityList(
 }
 
 /**
- * *Compressed Control Point Weights Data* (§12.1.14, Figure 149). Only the control points whose
- * weight is not 1 store a value, so [weightIndices] says which — "JT file loaders/readers can
- * infer that the Weight Value is 1 for Control Points that don't have a Weight value stored".
+ * *Compressed Control Point Weights Data* (v10 §12.1.14 Figure 149 == 9.5 §8.1.14 Figure 237).
+ * Only the control points whose weight is not 1 store a value, so [weightIndices] says which —
+ * "JT file loaders/readers can infer that the Weight Value is 1 for Control Points that don't
+ * have a Weight value stored", identical prose in both generations.
+ *
+ * Generation delta: v10 `VecI32{Int32CDP, Lag1}` + `VecF64{Int64CDP, NULL}` (with the bitwise
+ * `I64`→`F64` reinterpretation the consumer applies); 9.5
+ * `VecI32{Int32CDP, `**`Stride1`**`}` + `VecF64{`**`Float64CDP`**`, NULL}`, natively `F64`.
  */
 data class CompressedControlPointWeights(
     /** I32 Weights Count: the total number of weights (one per rational control point). */
     val weightsCount: Int,
-    val weightIndices: Int32Vector,
-    val weightValues: Float64Vector,
+    val weightIndices: IntVectorField,
+    val weightValues: DoubleVectorField,
 ) {
     /**
      * The weight of every one of the [weightsCount] weighted control points, with the
@@ -139,11 +155,30 @@ data class CompressedControlPointWeights(
         internal fun read(
             r: ByteReader,
             externallyCompressed: Boolean,
+        ): CompressedControlPointWeights =
+            read(
+                r,
+                { Int32Vector(Int32Cdp.readV10(it, externallyCompressed = externallyCompressed), Predictor.LAG1) },
+                { Float64Vector(Int64Cdp.read(it, externallyCompressed = externallyCompressed)) },
+            )
+
+        // spec: 9.5 Figure 237
+        internal fun read95(r: ByteReader): CompressedControlPointWeights =
+            read(
+                r,
+                { Int32VectorMk1(Int32CdpMk1.read(it), Predictor.STRIDE1) },
+                { Float64CdpVector(Float64Cdp.read(it)) },
+            )
+
+        private fun read(
+            r: ByteReader,
+            indexVector: (ByteReader) -> IntVectorField,
+            valueVector: (ByteReader) -> DoubleVectorField,
         ): CompressedControlPointWeights {
             val count = r.readI32()
             if (count < 0) throw JtFormatException("Weights Count $count is negative")
-            val indices = Int32Vector(Int32Cdp.readV10(r, externallyCompressed = externallyCompressed), Predictor.LAG1)
-            val values = Float64Vector(Int64Cdp.read(r, externallyCompressed = externallyCompressed))
+            val indices = indexVector(r)
+            val values = valueVector(r)
             if (indices.size != values.size) {
                 throw JtFormatException("${indices.size} weight indices for ${values.size} weight values")
             }
@@ -176,15 +211,18 @@ data class CompressedControlPointWeights(
  */
 data class CompressedCurveData(
     val nonTrivialKnotVectors: NonTrivialKnotVectorEntityList,
-    val curveBaseTypes: Int32Vector,
-    val degrees: Int32Vector,
-    val controlPointCounts: Int32Vector,
-    val controlPointDimensionality: Int32Vector,
-    /** `NURBS Curve Empty Fields`: one reserved entry per curve, preserved as read. */
-    val emptyFields: Int32Vector,
+    val curveBaseTypes: IntVectorField,
+    val degrees: IntVectorField,
+    val controlPointCounts: IntVectorField,
+    val controlPointDimensionality: IntVectorField,
+    /**
+     * `NURBS Curve Empty Fields` (v10) / `NURBS Curve Reserved Fields` (9.5) — the same box
+     * renamed: one reserved entry per curve, preserved as read.
+     */
+    val emptyFields: IntVectorField,
     val controlPointWeights: CompressedControlPointWeights,
-    val controlPoints: Float64Vector,
-    val knotVectors: Float64Vector,
+    val controlPoints: DoubleVectorField,
+    val knotVectors: DoubleVectorField,
     /** 2 for UV (parameter-space) curves, 3 for MCS/XYZ curves — Tables 70 and 71. */
     val spatialDimension: Int,
 ) {
@@ -257,12 +295,59 @@ data class CompressedCurveData(
             curveCount: Int,
             externallyCompressed: Boolean,
             uvCurves: Boolean = false,
+        ): CompressedCurveData =
+            read(
+                r,
+                curveCount,
+                uvCurves,
+                { NonTrivialKnotVectorEntityList.read(it, externallyCompressed) },
+                { Int32Vector(Int32Cdp.readV10(it, externallyCompressed = externallyCompressed), Predictor.NONE) },
+                { CompressedControlPointWeights.read(it, externallyCompressed) },
+                { Float64Vector(Int64Cdp.read(it, externallyCompressed = externallyCompressed)) },
+            )
+
+        /**
+         * The same collection in the JT 9 generation (9.5 §8.1.15, Figure 238). Four deltas
+         * against [read], all of them in what fills the boxes rather than in the boxes: the five
+         * per-curve vectors are `VecI32{Int32CDP, `**`Lag1`**`}` where v10 writes them with the
+         * NULL predictor; the packet is the **Mk. 1** one of §8.1.1; the fifth vector is named
+         * *NURBS Curve Reserved Fields*; and the control points and knot vectors are
+         * `VecF64{`**`Float64CDP`**`, NULL}`, natively `F64` with no reinterpretation step.
+         *
+         * There is no `externallyCompressed` parameter: 9.5 §8 has no external-compression
+         * branch anywhere (see DESIGN.md delta 37) — that rule is v10's.
+         *
+         * spec: 9.5 Figure 238
+         */
+        fun read95(
+            r: ByteReader,
+            curveCount: Int,
+            uvCurves: Boolean = false,
+        ): CompressedCurveData =
+            read(
+                r,
+                curveCount,
+                uvCurves,
+                { NonTrivialKnotVectorEntityList.read95(it) },
+                { Int32VectorMk1(Int32CdpMk1.read(it), Predictor.LAG1) },
+                { CompressedControlPointWeights.read95(it) },
+                { Float64CdpVector(Float64Cdp.read(it)) },
+            )
+
+        private fun read(
+            r: ByteReader,
+            curveCount: Int,
+            uvCurves: Boolean,
+            knotList: (ByteReader) -> NonTrivialKnotVectorEntityList,
+            perCurveVector: (ByteReader) -> IntVectorField,
+            weightsData: (ByteReader) -> CompressedControlPointWeights,
+            valueVector: (ByteReader) -> DoubleVectorField,
         ): CompressedCurveData {
             val spatialDimension = if (uvCurves) 2 else 3
-            val knots = NonTrivialKnotVectorEntityList.read(r, externallyCompressed)
+            val knots = knotList(r)
 
-            fun vector(name: String): Int32Vector {
-                val v = Int32Vector(Int32Cdp.readV10(r, externallyCompressed = externallyCompressed), Predictor.NONE)
+            fun vector(name: String): IntVectorField {
+                val v = perCurveVector(r)
                 if (v.size != curveCount) {
                     throw JtFormatException("$name has ${v.size} entries for $curveCount curves")
                 }
@@ -291,7 +376,7 @@ data class CompressedCurveData(
                     )
                 }
             }
-            val weights = CompressedControlPointWeights.read(r, externallyCompressed)
+            val weights = weightsData(r)
             val expectedWeights =
                 (0 until curveCount).sumOf { curve ->
                     if (dimensionality.values[curve] == spatialDimension + 1) pointCounts.values[curve] else 0
@@ -302,7 +387,7 @@ data class CompressedCurveData(
                         "$expectedWeights of the rational curves",
                 )
             }
-            val controlPoints = Float64Vector(Int64Cdp.read(r, externallyCompressed = externallyCompressed))
+            val controlPoints = valueVector(r)
             val expectedCoordinates = pointCounts.values.sumOf { it } * spatialDimension
             if (controlPoints.size != expectedCoordinates) {
                 throw JtFormatException(
@@ -310,7 +395,7 @@ data class CompressedCurveData(
                         "($spatialDimension per control point)",
                 )
             }
-            val knotVectors = Float64Vector(Int64Cdp.read(r, externallyCompressed = externallyCompressed))
+            val knotVectors = valueVector(r)
             var expectedKnotValues = 0
             val seen = mutableSetOf<Int>()
             for (entry in knots.entityIndices) {

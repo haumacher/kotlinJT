@@ -7,13 +7,21 @@ import de.haumacher.kotlinjt.io.Bytes
 import de.haumacher.kotlinjt.io.toBytes
 
 /**
- * The Int32 Compressed Data Packet in both wire generations: the JT 9 "Mk. 2" packet (JT 9.5
- * reference §8.1.2, fixture-verified — [read]) and the third-generation v10 packet (v10
- * reference §12.1.1 Figure 132, verified against the NIST 10.5 fixture — [readV10]); see
- * DESIGN.md for the deltas. The model preserves every wire field, so [encode] reproduces the
- * packet byte-identically without re-running an entropy coder; [values] carries the decoded
- * symbol values (the residuals before any predictor unpacking — the containing field applies
- * its predictor via [unpackResiduals]).
+ * The Int32 Compressed Data Packet in the **Mk. 2 lineage** and only that lineage: the JT 9
+ * "Mk. 2" packet (JT 9.5 reference §8.1.2 Figure 221, fixture-verified — [read]) and the
+ * third-generation v10 packet that descends from it (v10 reference §12.1.1 Figure 132, verified
+ * against the NIST 10.5 fixture — [readV10]); see DESIGN.md for the deltas.
+ *
+ * 9.5's *other* Int32 packet — the Mk. 1 one of §8.1.1, which the JT B-Rep topology streams and
+ * the whole NURBS curve machinery use — is a different wire format and lives in
+ * `encoding.Int32CdpMk1`. Nothing in the byte stream tells the two apart; 9.5's figure notation
+ * does (`{Int32CDP}` = Mk. 1, `{Int32CDP2}` = Mk. 2), so the reading call site must know which
+ * it wants. A caller that guesses is a bug, not a leniency.
+ *
+ * The model preserves every wire field, so [encode] reproduces the packet byte-identically
+ * without re-running an entropy coder; [values] carries the decoded symbol values (the residuals
+ * before any predictor unpacking — the containing field applies its predictor via
+ * [unpackResiduals]).
  */
 sealed class Int32Cdp {
     /** The I32 Value Count field: the number of values the packet decodes to. */
@@ -913,46 +921,56 @@ internal fun decodeArithmetic(
 }
 
 /**
- * The arithmetic decoder core, shared by the Int32 and Int64 packet generations: decodes
- * [valueCount] symbols from [codeText] against the [occurrences] histogram and returns the
- * *index* of the probability-context entry each symbol selected. Mapping an index to a value
- * (or to the next out-of-band value, when the entry is the escape) is the caller's job, which
- * is what lets Int64CDP reuse this unchanged (§12.1.2: "Int64CDP shares the same encoding and
- * compression logic as Int32CDP").
+ * The 16-bit integer arithmetic decoder core — the *only* part of the arithmetic CODEC that is
+ * identical in all three packet generations. 9.5 Appendix C §3.1 (`ArithmeticCodec::decode`,
+ * Mk. 1), §3.2 (`ArithmeticCodec2::decode`, Mk. 2) and v10's Annex B print the same
+ * `removeSymbolFromStream` body: `rescaledCode = ((code − low + 1) * total − 1) / (high − low + 1)`,
+ * the `0x4000` underflow squeeze, one fresh bit per renormalization shift.
+ *
+ * Each call to [decodeSymbolIndex] consumes exactly one symbol *against the histogram it is
+ * handed*, which is what lets the Mk. 1 driver switch probability context per symbol
+ * (`iCurrContext = pCntxEntry->iNextCntx`, App. C §3.1) while Mk. 2 and v10 hand it the same
+ * table every time. Mapping the returned entry index to a value — or to the next out-of-band
+ * value when the entry is the escape — belongs to the packet, not here.
  */
-internal fun decodeArithmeticSymbolIndices(
-    codeText: IntArray,
-    valueCount: Int,
-    occurrences: List<Int>,
-): IntArray {
-    if (occurrences.isEmpty()) throw JtFormatException("arithmetic CODEC with an empty probability context")
-    val total = occurrences.sum()
-    if (total <= 0 || total > 0xFFFF) throw JtFormatException("arithmetic probability context total count $total out of range")
+internal class ArithmeticDecoder(
+    private val codeText: IntArray,
+) {
+    private val bits = WordBitReader(codeText)
+    private var low = 0
+    private var high = 0xFFFF
+    private var code: Int
 
-    if (codeText.isEmpty()) throw JtFormatException("arithmetic CodeText is shorter than the initial 16-bit code")
-    val bits = WordBitReader(codeText)
-    var code = bits.readUnsigned(16)
-    var low = 0
-    var high = 0xFFFF
+    init {
+        if (codeText.isEmpty()) throw JtFormatException("arithmetic CodeText is shorter than the initial 16-bit code")
+        code = bits.readUnsigned(16)
+    }
 
-    // The declared length is padded up to whole words; the final symbol's renormalization may
-    // read into that zero padding, but never past the stored words.
-    fun nextBit(): Int = if (bits.consumed < codeText.size * 32) bits.readBit() else 0
+    /**
+     * The declared length is padded up to whole words; the final symbol's renormalization may
+     * read into that zero padding, but never past the stored words.
+     */
+    private fun nextBit(): Int = if (bits.consumed < codeText.size * 32) bits.readBit() else 0
 
-    val out = IntArray(valueCount)
-    for (i in 0 until valueCount) {
+    /**
+     * Decodes one symbol against [occurrences] (whose sum must be [total]) and returns the
+     * index of the probability-context entry it selected.
+     */
+    fun decodeSymbolIndex(
+        occurrences: IntArray,
+        total: Int,
+    ): Int {
         val rescaled = (((code - low + 1) * total - 1) / (high - low + 1))
         var cumulative = 0
         var hit = -1
-        for ((index, occurrence) in occurrences.withIndex()) {
-            if (rescaled < cumulative + occurrence) {
+        for (index in occurrences.indices) {
+            if (rescaled < cumulative + occurrences[index]) {
                 hit = index
                 break
             }
-            cumulative += occurrence
+            cumulative += occurrences[index]
         }
         if (hit < 0) throw JtFormatException("arithmetic symbol lookup failed for rescaled count $rescaled")
-        out[i] = hit
 
         // Remove the symbol from the stream (16-bit renormalization).
         val range = high - low + 1
@@ -973,6 +991,37 @@ internal fun decodeArithmeticSymbolIndices(
             high = ((high shl 1) or 1) and 0xFFFF
             code = ((code shl 1) or nextBit()) and 0xFFFF
         }
+        return hit
     }
-    return out
+
+    companion object {
+        /** Validates a histogram the way every generation's driver needs it, returning its total. */
+        internal fun totalOf(occurrences: IntArray): Int {
+            if (occurrences.isEmpty()) throw JtFormatException("arithmetic CODEC with an empty probability context")
+            val total = occurrences.sum()
+            if (total <= 0 || total > 0xFFFF) {
+                throw JtFormatException("arithmetic probability context total count $total out of range")
+            }
+            return total
+        }
+    }
+}
+
+/**
+ * The single-context arithmetic driver shared by the Int32 Mk. 2, Int32 v10 and Int64 packets:
+ * decodes [valueCount] symbols from [codeText] against the [occurrences] histogram and returns
+ * the *index* of the probability-context entry each symbol selected. This is App. C §3.2's
+ * `decode(nValues, …)` loop — one context, one symbol per value. The Mk. 1 packet's driver
+ * (App. C §3.1) loops over a *symbol* count and switches context per symbol; it lives with the
+ * Mk. 1 packet.
+ */
+internal fun decodeArithmeticSymbolIndices(
+    codeText: IntArray,
+    valueCount: Int,
+    occurrences: List<Int>,
+): IntArray {
+    val histogram = occurrences.toIntArray()
+    val total = ArithmeticDecoder.totalOf(histogram)
+    val decoder = ArithmeticDecoder(codeText)
+    return IntArray(valueCount) { decoder.decodeSymbolIndex(histogram, total) }
 }

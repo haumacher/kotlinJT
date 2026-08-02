@@ -206,8 +206,11 @@ What that pass did to the deltas recorded below:
   simply have Reserved Field = 0 — and in *both* documents that GUID is an XOR alternative to
   the LSG Segment ID, not an addition) · delta 14 (the "reserved 12-byte tail" is the documented
   TopoMesh Compressed Rep Data **V2** tail, 9.5 Fig. 92) · delta 17 (Rev-D Appendix C §2.2 *does*
-  describe the bitlength wire format, statement for statement) · delta 36 (Figure 126's guard
-  encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right) ·
+  describe the bitlength wire format, statement for statement — so the library's least-grounded
+  decoder is now its best-cited one; and package P8 below implements the *other* scheme delta 17
+  names, Appendix C §2.1's Mk. 1 prefix code, as `decodeBitlengthMk1`) · delta 36 (Figure 126's
+  guard encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right,
+  and P8 added the 9.5 half of the rule to the delta itself) ·
   delta 9, corrected and closed by package P2 below (9.5 Fig. 30's guard is `>= 1`, not
   `>= 2`, and the identity of the second `U64` is the figure's own repeat of the first) ·
   **delta 11's *rationale*, corrected by package P6** (the `0x000F` refusal is right, but there
@@ -501,7 +504,9 @@ table) and pinned by the v9 halves of the per-figure codec tests.
     are Table 2's *bare* `VecF64` — an `I32` count and plain doubles "written in binary form" —
     not `VecF64{Float64CDP}`. So the two 9.5-only codec families that gate the JT 9 B-Rep and
     the JT 9 wireframe curve payload (`Float64CDP` §8.1.3 and Int32 CDP Mk. 1 §8.1.1, neither
-    implemented) are simply not on this path. That is why LWPA landed ahead of them.
+    implemented at the time) are simply not on this path. That is why LWPA landed ahead of them —
+    and package P8 has since implemented both, which changes nothing here: the LWPA element still
+    reaches neither.
 
     The *Supported Surface Type* value set (0 Nurbs … 5 Torus, 6/7 Reserved) is value-identical
     in both documents; 9.5 leaves its table unnumbered on p.210, v10 numbers it Table 100. And
@@ -1456,6 +1461,100 @@ each symbol selected, and the Int32 and Int64 layers map indices to values — w
 move-to-front (1) codecs; its null and chopper forms are spec-derived, their layout fixed by
 Figure 135 exactly as the fixture-verified Int32 forms.
 
+### The two 9.5-only packet families, and the dispatch rule that has no wire signal (package P8)
+
+`encoding.Int32CdpMk1` (9.5 §8.1.1, Figure 218) and `encoding.Float64Cdp` (§8.1.3, Figure 224)
+close the last two codec gaps of the JT 9 generation. Together they gate every JT 9 B-Rep topology
+stream, the §8.1.13–§8.1.15 NURBS machinery under the JT 9 wireframe rep, and the ULP `params1`
+codes — all of which stay opaque for reasons that are *not* the codecs; see below.
+
+**The dispatch rule is the design constraint.** 9.5 pp. 19–20 define the figure notation
+`Int32CDP` = §8.1.1 Mk. 1 and `Int32CDP2` = §8.1.2 Mk. 2, **per field**, and there is no tag, no
+length, no magic byte that separates the two on the wire. So the reading *call site* chooses, and
+the API is built to make choosing unavoidable: `Int32CdpMk1` and `shape.Int32Cdp` are unrelated
+types with no common supertype, no auto-detecting entry point, and no default. Where a collection
+is generation-independent in shape but not in content — the NURBS figures, box for box identical
+in 9.5 and v10 — the collection is modelled once against the `IntVectorField` /
+`DoubleVectorField` interfaces and read through `read` (v10) or `read95` (9.5). A caller that
+guesses is a bug, not a leniency, which is why the acceptance for this package is not only "both
+decode" but "each refuses the other's bytes by name".
+
+**What the two packets are.** Mk. 1 is a different packet from Mk. 2 end to end, not a variant:
+`U8 CODEC Type` first with **no Value Count** (so no empty-packet form), a probability-context
+*list* of one or two tables with a `U8` count and a per-entry `Next Context`, out-of-band data
+gated on an explicit `I32 Out-Of-Band Value Count > 0`, `CodeText Length` and `Value Element Count`
+*after* the out-of-band packet, an `I32 Symbol Count` when two tables are in play, and a real
+`VecU32` CodeText carrying its own length word. Its arithmetic driver is a state machine: the
+context of the next symbol is the entry's `Next Context`, and an escape emits an out-of-band value
+**only while table 0 is in use** — which is why symbol count and value count are separate fields.
+Its bitlength codec is a prefix-code walk with `cStepBits = 2` (Appendix C §2.1), unrelated to the
+Mk. 2 bitlength grammar of §2.2.
+
+Float64CDP is not `Int64CDP` renamed. Its symbols are natively `F64` (the context stores an
+`F64 Associated Value`, so there is no bit-reinterpretation step), it carries `F64 Value Range
+Min`/`Max` on the wire, its out-of-band array is **always** a raw `VecF64` — "*the Float64
+Compressed Data Packet simply writes out the 'out-of-band data' array with no additional encoding
+attempted*" (p.263) — its contexts are plain byte-aligned `I32` counts with flat 20-byte entries
+(symbol *unbiased*, so the escape is literally `−2`; plus an `I32 Reserved Field` carried verbatim
+per §9.3), and it has neither chopper nor move-to-front.
+
+**Where the document runs out, the reader refuses by name.** Four places, all recorded rather than
+guessed:
+
+- a Mk. 1 packet declaring CODEC 4 (Chopper) — Figure 218's table lists it, but the figure draws no
+  chopper fields and §8.1.2 introduces the Chopper as what *Mk. 2* brings to the table (p.258);
+- a Float64 packet declaring CODEC 1 (Bitlength) — Appendix C §2.1's codec is `Int32`-valued and
+  §8.1.3 defines no 64-bit form and no reinterpretation step — or CODEC 4, for the same reason as
+  Mk. 1;
+- a Float64 packet with **two** probability context tables *and* a live CodeText: Figure 224 writes
+  a Symbol Count for that case and quotes the same escape-in-table-0 subtlety, but Figure 226 has
+  no `Next Context` field, so there is nothing to switch tables with. With `CodeText Length = 0`
+  (all values out of band) the same packet stays readable, because no symbol is decoded at all.
+
+**Two readings that are inference, not citation**, and are marked as such in the code:
+
+1. *A Mk. 1 escape met in a non-zero context emits no value.* §8.1.1 says only what it does **not**
+   do ("Only if the Codec is using Probability Context Table 0 … does it emit a Value from the
+   'Out-Of-Band' data array"), never what it does instead; emitting nothing is the only reading
+   under which its own next sentence — "the number of Symbols decoded can be larger than the number
+   of Values produced" — is true. The safety net is the mandatory `values.size == Value Element
+   Count` check: a wrong reading of a real two-table packet fails loudly instead of producing a
+   plausible list.
+2. *A Float64 Null-CODEC packet packs each value into two CodeText words, low-order word first.*
+   §8.1.3 never says. The two-words-per-value part is forced by the framing (a Null packet has no
+   Value Element Count at all, so the `VecU32` count is the only thing that can give the value
+   count); the word order is taken from v10 §12.1.2, this packet's own successor, and is
+   unobservable in a little-endian file.
+
+**The evidence, stated honestly.** No fixture in the corpus carries either packet — none of the
+three files has a JT B-Rep, a ULP or a JT 9 wireframe segment — so every ledger row this package
+flips is `spec`, never `spec+fixture`. Ranked by strength:
+
+- the *framing* of both packets, the Mk. 1 context list and the Mk. 1 bitlength grammar come from
+  the figures and from Appendix C's decoder source, read off pages rendered with `pdftoppm`
+  (`pdftotext` loses the branch structure of Figures 218/219/224);
+- the *arithmetic driver* is the fixture-verified core, and `CompressedDataPacketFixtureTest`
+  makes that concrete: it walks the corpus, re-frames **663 real arithmetic Mk. 2 packets**
+  (152 + 96 + 415 across the three fixtures) into the Mk. 1 layout around their own CodeText and
+  histogram, and requires identical values and a byte-identical re-encode. Real entropy-coded data,
+  no producer of ours;
+- the same test offers all **684** Mk. 2 packets to the Mk. 1 reader in their own framing: every
+  single one is refused with a named `JtFormatException` — the cross-generation hazard measured
+  rather than asserted;
+- CodeText produced by the tests' own arithmetic encoder (`CdpTestSupport`) backs only the
+  multi-context and Float64 decodes, and proves self-consistency, nothing more. It is pinned
+  against the fixture-verified decoder first so a bug in it cannot pass as a bug elsewhere;
+- `CompressedDataPacketFixtureTest`'s first battery is the corpus hook: it skips *visibly* today and
+  fires the day a fixture with one of those segment kinds arrives.
+
+**What was wired up, and what deliberately was not.** The §8.1.13/§8.1.14/§8.1.15 collections (with
+§8.1.15.1/2/3) now read in both generations — `CompressedCurveData.read95` and friends — because
+those are §8 collections whose layout the document fixes completely. The *elements* that contain
+them stay opaque, and their notes stay accurate: the JT 9 Wireframe Rep Element (Figure 130) has an
+unestablished surrounding layout, the JT B-Rep topology streams are §7.2.3.1 work, and the ULP
+`params1` collection needs §7.2.2's framing. Decoding a packet is not decoding the element that
+contains one; opening those is the next package's job, and it now has its codecs.
+
 ### §9 LWPA: decoded in both generations, spec-derived, and honest about it
 
 No fixture carries a JT LWPA segment — **in either generation**, which is the defining constraint
@@ -1578,6 +1677,14 @@ Continuing the delta numbering.
     wire field on both sides of the branch. `Int32Cdp.readV10` and `Int64Cdp.read` therefore take
     the segment's actual compression state, and the model records which form it read
     (`Int32OutOfBand` / `Int64OutOfBand`) so re-serialization stays a projection.
+    *Added by package P8 (9.5 finding 11), so the rule is never generalized backwards:* **9.5 has
+    neither branch.** Its Mk. 2 packet always nests the out-of-band packet (Figure 221 draws it
+    unconditionally under the Arithmetic branch), its Mk. 1 packet always writes an
+    `I32 Out-Of-Band Value Count` and nests only when that count is positive (Figure 218), and its
+    Float64 packet always writes a count plus a raw `VecF64` (Figure 224) — three conventions, none
+    of them conditioned on the enclosing segment's compression state, which §8 never mentions.
+    `externallyCompressed` therefore exists on `readV10` and `Int64Cdp.read` only, and correctly
+    does not exist on `Int32Cdp.read`, `Int32CdpMk1.read` or `Float64Cdp.read`.
 38. **Figure 104's Version Number box says `I16`; the field is one byte.** §10.1's own field
     description says `U8`, and the bytes side with the prose: all five bodies parse to exact length
     only with one version byte (`01`), and with two the Edge Count misaligns. Recorded as a figure
