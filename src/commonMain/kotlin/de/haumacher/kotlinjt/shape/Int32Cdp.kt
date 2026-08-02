@@ -257,12 +257,24 @@ sealed class Int32Cdp {
                     val context = Int32ProbabilityContext.read(r)
                     val outOfBand = read(r, depth + 1)
                     val values =
-                        decodeArithmetic(
-                            codeText.toIntArray(),
-                            count,
-                            context.entries.map { ArithmeticEntry(it.symbol == -2, it.occurrenceCount, it.associatedValue) },
-                            outOfBand.values,
-                        )
+                        if (codeTextLength == 0) {
+                            // spec: 9.5 §8.1.2 (p.258) — a CodeText Length of 0 means every
+                            // value is out of band; there is no arithmetic stream to decode and
+                            // the escape values are the answer. The v10 path has always done
+                            // this; the JT 9 path used to fall into the decoder and refuse a
+                            // packet the document explicitly defines. No fixture carries one.
+                            outOfBand.values
+                        } else {
+                            decodeArithmetic(
+                                codeText.toIntArray(),
+                                count,
+                                context.entries.map { ArithmeticEntry(it.symbol == -2, it.occurrenceCount, it.associatedValue) },
+                                outOfBand.values,
+                            )
+                        }
+                    if (values.size != count) {
+                        throw JtFormatException("arithmetic CODEC decoded ${values.size} values, expected $count")
+                    }
                     Arithmetic(count, codeTextLength, codeText, context, outOfBand, values)
                 }
             }

@@ -648,10 +648,18 @@ internal class LsgAuthor(
     }
 
     companion object {
-        /** Local version numbers of the v10 element bodies this writer emits (all "1"). */
+        /** Local version numbers of the v10 element bodies this writer emits. */
         private const val NODE_VERSION = 1
         private const val ATTRIBUTE_VERSION = 1
-        private const val ATOM_VERSION = 1
+
+        /**
+         * Property atoms are the documented exception to the "1" default. v10 §13 *Version
+         * numbers* lists `0x02` for all eight atom types — Base, String, Integer, Floating
+         * Point, JT Object Reference, Date, Late Loaded and Vector4f — and the 10.5 producer
+         * writes 2. The figures show no version-2-conditional field, so the value is all that
+         * changes. (9.5 §9.4 keeps these at 1, but this writer emits v10 only.)
+         */
+        private const val ATOM_VERSION = 2
 
         /** Figure 78: the Property Table's own version number. */
         private const val PROPERTY_TABLE_VERSION = 1
