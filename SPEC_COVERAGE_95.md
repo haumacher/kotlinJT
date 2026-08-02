@@ -325,25 +325,37 @@ Version Number moves a byte boundary; the two counts are four bytes in both revi
 in signedness alone. The element reaches neither `Float64CDP` nor Mk. 1, so it was never behind
 the CDP gate.)*
 
-# Phase 2 — implementation packages
+# Phase 2 — implementation, complete
 
-Ordered by value against what real 9.5 files contain, not by document order.
+All nine packages landed 2026-08-01/02. Ordered here as they were cut — by value against what
+real 9.5 files contain, not by document order — with the commit that closed each.
 
-| # | Package | Closes | Cost | Why here |
+| # | Package | Closes | Commit | Outcome |
 |---|---|---|---|---|
-| **P1** | Acceptance invariants: the two in `FixtureDiscoveryTest`, plus `BrepOpacityTest`'s byte pattern | [#14](https://github.com/haumacher/kotlinJT/issues/14), G-4 | trivial | Cheapest, and it is what keeps `KR360-1.jt` from turning the suite red while the rest lands. E-13 supplies the citation |
-| **P2** | The `>= N` version-guard rule + Polyline/Point Set Shape **Node** elements | [#11](https://github.com/haumacher/kotlinJT/issues/11) | small | Bernhard's bug, first half. Includes the *live* losslessness hole: the writers re-derive field presence from `version` instead of model nullability |
-| **P3** | Polyline/Point Set Shape **LOD** bodies, 9.5 layout | [#12](https://github.com/haumacher/kotlinJT/issues/12) | small | Second half. Six deltas from the v10 reader; the NULL-vs-Lag1 predictor is settled by a stored hash, and the point set's FGPV hash omits the face-group term |
-| **P4** | LSG model-correctness sweep | B-2, B-6, C-F2, C-F7/F8/F9, A-1/A-2 | small | Every one spec-cited, every one currently silent-wrong rather than noisy-wrong |
-| **P5** | The all-out-of-band arithmetic packet | H-5 | trivial | Four lines; the v10 path already does it |
-| **P6** | 9.5 LWPA decode — **landed as P7** (see *Landed so far*) | G-1 | small | Newly cheap, and it removes a false statement from three files |
-| **P7** | Int32 CDP **Mk. 1** and `Float64CDP` — **renumbered to P8, and landed 2026-08-02**; the LWPA package took the P7 slot | H-2, H-3, G-2/G-3 | large | Gates JT 9 B-Rep and the JT 9 wireframe curve payload, NURBS and the Primitive Set path. **Not** the LWPA element, which reaches neither codec. Both codecs and the 9.5 NURBS collections now decode and round-trip; the *elements* that contain them stay opaque with named blockers, because a packet is not an element |
-| **P8** | 9.5 PMI | F-1, F-5, F-8, F-10, F-12 | large | Genuine restructuring; needs its own ledger pass |
-| **P9** | Writer strictness | [#15](https://github.com/haumacher/kotlinJT/issues/15) | small | The strict half of the doctrine, and a v10 conformance bug in shipping code |
+| **P1** | Acceptance invariants: two in `FixtureDiscoveryTest`, plus `BrepOpacityTest`'s byte pattern | [#14](https://github.com/haumacher/kotlinJT/issues/14), G-4 | `4ddbd61` | All three asserted producer conventions as though normative. E-13 supplied the citation that 9.5 relates none of those counts |
+| **P2** | The `>= N` version-guard rule + Polyline/Point Set Shape **Node** elements | [#11](https://github.com/haumacher/kotlinJT/issues/11) | `74cbdb0` | Presence resolved from the framed body's remaining length, not a version test; closed a live losslessness hole in two writers |
+| **P3** | Polyline/Point Set Shape **LOD** bodies, 9.5 layout | [#12](https://github.com/haumacher/kotlinJT/issues/12) | `bd55ae6` | NULL-vs-Lag1 settled by a stored hash; the point set's FGPV hash omits the face-group term. Corrected delta 14 |
+| **P4** | Layer 2 per-shape split and materials | [#13](https://github.com/haumacher/kotlinJT/issues/13) | `caaf784` | One node per body, one list entry per LOD. Eleven materials recovered on the bug fixture |
+| **P5** | Root-geometry authoring | [#16](https://github.com/haumacher/kotlinJT/issues/16) | `47ba509` | 9.5 §9.8 / Figure 245: shapes hang off a Part Node. Silent geometry loss from any hand-built scene |
+| **P6** | The all-out-of-band arithmetic packet + writer atom version | H-5, [#15](https://github.com/haumacher/kotlinJT/issues/15) | `1e29c4d` | Two generation asymmetries the corpus could not reach, one per side of the seam |
+| **P7** | LSG model-correctness sweep | B-2, B-6, C-F2, C-F5/F7/F8/F9/F10 | `1c8c009` | Five byte-neutral wrong-model decodes. Found six probes passing *vacuously* against an infinite-extent sentinel box |
+| **P8** | 9.5 LWPA decode | G-1 | `628c3c4` | The reference we said was silent has §7.2.9.1, a GUID and Figure 215. One field (`I16` version) was the only wire delta |
+| **P9** | Int32 CDP **Mk. 1** and `Float64CDP` | H-2, H-3, G-2/G-3 | `b50cabf` | Transcribed from the reference's own Appendix C; 663 real Mk. 2 packets re-framed as the differential oracle |
+| **P10** | 9.5 PMI | F-1, F-4, F-5, F-8, F-10, F-12 | `c3c3bd3` | A second element family, not an older version: v10 deleted thirteen typed collections |
 
-P1–P3 are one session's work and close both open 9.5 bugs. The CDP package (P7 in the table,
-renumbered P8) is the gate for everything precise-geometry-shaped and should be scheduled as its
-own milestone — LWPA turned out **not** to be behind that gate.
+## What remains, and its condition
+
+Nothing is left in an unfinished state; what is left is **deferred with a stated trigger**, per
+issue #1's no-permanent-non-goals rule.
+
+| Deferred | Blocked on |
+|---|---|
+| JT ULP element body (§7.2.8, ~24 rows `unchecked` in Delta, `opaque` in fate) | A fixture carrying a JT ULP segment. The codecs exist after P9; what is missing is the delta pass and an oracle |
+| JT 9 B-Rep and Wireframe Rep element framing | Their own framing, no longer a codec — P9 removed that gate. B-rep additionally stays `opaque` **by doctrine** (issue #1) |
+| 9.5 Compressed CAD Tag Data vectors | Its own codec variant (`I16` version, `Int32CDP2`+Lag1, split 64-bit tags); framed and preserved verbatim today |
+| Point geometry in the Layer 2 scene | Paired deliberately with the v10 Point Set LOD body so both halves of the seam land together |
+| Base Light Data's attribute-slot placement (C-F10) | A fixture carrying a light. Both references draw the slot wrongly, in mirror-image ways |
+| One PMI texture branch (Fig. 170) | A fixture. Figure and prose disagree; the prose is followed and the disagreement raised on every occurrence |
 
 ---
 
@@ -747,7 +759,20 @@ everywhere it is read; authoring stays `n/a: writer emits v10` throughout.
   **no `UNKNOWN_SEGMENT_TYPE` note is emitted**; the payload decompresses (ZLIB via the algorithm-byte
   dispatch), the element frames, and `ObjectTypeIds.nameOf` returns `"JT ULP Element"`
   (`ObjectTypeIds.kt:88`, `:155`). So Fig. 171 and Fig. 172's *framing* are `opaque`, not `—`.
-  Everything inside the element body is `—`.
+
+**The fate of everything inside the element body, stated once for the whole section.** These rows
+read `opaque`, not `—`: a JT ULP segment is named, decompressed, element-framed and preserved
+byte-for-byte today, so its contents have a *final* fate under the Layer 0 guarantee rather than
+an unfinished one. Their `Delta` column stays `unchecked` because no field-by-field diff was run —
+that is an honest gap in the *analysis*, not in the behaviour, and the distinction is the point of
+having two columns.
+
+**The condition under which their time comes** (issue #1: no permanent non-goals): a fixture
+carrying a JT ULP segment. Nothing else is missing — P8 supplied the Int32 Mk. 1 and Float64
+packets the ULP tables need, so the remaining work is the field-by-field delta pass and the
+element framing, not a codec. Until such a fixture exists there is no oracle: the ULP body is a
+chain of predictor-coded tables whose only self-check is consumption, and a decode written against
+the document alone could not be distinguished from a decode written wrongly.
 
 | 9.5 unit | v10 counterpart | Delta | Read | Write | Code | Notes |
 |---|---|---|---|---|---|---|
@@ -755,42 +780,42 @@ everywhere it is read; authoring stays `n/a: writer emits v10` throughout.
 | Fig. 171 — JT ULP Segment data collection (p.202) | Fig. 194 | `identical` — Segment Header, JT ULP Element | `opaque` | `n/a: byte-faithful carry` | `BrepOpacityTest` (kind covered, skips visibly) | |
 | §7.2.8.1 Object Type ID (p.202) | Annex G.1, same GUID | `identical` | `done` (named) | `n/a` | `ObjectTypeIds.kt:88` | |
 | Fig. 172 — JT ULP Element data collection (p.203) | Fig. 195 | `structural` + `widths`: **(a)** version `I16` (9.5) vs `U8` (v10); **(b)** 9.5 orders the body *Material Attribute Element × Count → Topology Data → Geometric Data → (`Version Number > 1`) Material Attribute Element Properties × Count → Information Recovery*, while v10 pairs *Material Attribute Element + Material Attribute Element Properties* inside **one** leading loop and drops the `Version Number > 1` guard entirely | `opaque` | `n/a: byte-faithful carry` | — | 9.5 supports versions 1 and 2 |
-| Fig. 173 — Topology Data collection (p.204) | Fig. 196 | `structural` (guards): 9.5 guards Regions with `Region Count > 1` and Shells with `Shell Count > 1` (**> 1**, not > 0); the remaining five use `> 0`. v10 Fig. 196 shows the same `> 1` / `> 0` split | `—` | `n/a: byte-faithful carry` | — | the `> 1` guards are unusual enough to be worth a second look if ULP is ever implemented |
-| Fig. 174 — Topological Entity Counts (p.205) | Fig. 197 | `identical` — 7 × `I32`, same order as the JT B-Rep's Fig. 103 | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 175 — Combined Predictor Type (p.206) | Fig. 198 | `identical` (checked): `VecI32{Int32CDP2, ePredictorType} : BasicArray`, `U8 : ProcessingType`, `& 0x02` → MapArray + Element Mapping, `& 0x01` → MultiplicityArray + Multiplicity Expansion | `—` | `n/a: byte-faithful carry` | — | this is the ULP's own encoding idiom; nothing in the library resembles it |
-| Fig. 176 — Regions Topology Data (p.207) | Fig. 199 | `unchecked` (inventory only) | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 177 — Shells Topology Data (p.208) | Fig. 200 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 178 — Faces Topology Data (p.209) | Fig. 201 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 179 — Loops Topology Data (p.212) | Fig. 202 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 180 — CoEdges Topology Data (p.214) | Fig. 203 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | v10 inserts two extra illustrations here (Figs. 204, 205 "Sample Model with Randomly / Sequentially Assigned Edge Indices") that 9.5 has no counterpart for |
+| Fig. 173 — Topology Data collection (p.204) | Fig. 196 | `structural` (guards): 9.5 guards Regions with `Region Count > 1` and Shells with `Shell Count > 1` (**> 1**, not > 0); the remaining five use `> 0`. v10 Fig. 196 shows the same `> 1` / `> 0` split | `opaque` | `n/a: byte-faithful carry` | — | the `> 1` guards are unusual enough to be worth a second look if ULP is ever implemented |
+| Fig. 174 — Topological Entity Counts (p.205) | Fig. 197 | `identical` — 7 × `I32`, same order as the JT B-Rep's Fig. 103 | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 175 — Combined Predictor Type (p.206) | Fig. 198 | `identical` (checked): `VecI32{Int32CDP2, ePredictorType} : BasicArray`, `U8 : ProcessingType`, `& 0x02` → MapArray + Element Mapping, `& 0x01` → MultiplicityArray + Multiplicity Expansion | `opaque` | `n/a: byte-faithful carry` | — | this is the ULP's own encoding idiom; nothing in the library resembles it |
+| Fig. 176 — Regions Topology Data (p.207) | Fig. 199 | `unchecked` (inventory only) | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 177 — Shells Topology Data (p.208) | Fig. 200 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 178 — Faces Topology Data (p.209) | Fig. 201 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 179 — Loops Topology Data (p.212) | Fig. 202 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 180 — CoEdges Topology Data (p.214) | Fig. 203 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | v10 inserts two extra illustrations here (Figs. 204, 205 "Sample Model with Randomly / Sequentially Assigned Edge Indices") that 9.5 has no counterpart for |
 | Fig. 181 — Surface Domain Classification (p.216) | Fig. 206 | `unchecked` (flow chart / classification, not a byte layout) | `—` | `n/a` | — | 9.5's rendering is badly broken in `pdftotext` (only the "Domain Type" caption survives) |
-| Fig. 182 — Edges Topology Data (p.218) | Fig. 207 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
-| Fig. 183 — Vertices Topology Data (p.220) | **none** | `9.5-only`: 9.5 stores `U8 : Vertex Array Flag` plus, when `& 0x01 != 0`, `VecI32{Int32CDP2, Combined:NULL} : Point Index Difference` and a Recover Point Indices step. **v10 Annex G says outright "Vertices Topology Data is not stored on disk. Instead it is constructed"** — yet v10's own Fig. 196 still draws a `Vertex Count > 0 → Vertices Topology Data` branch | `—` | `n/a: byte-faithful carry` | — | a v10 *internal* contradiction; 9.5 is unambiguous. Finding 8 |
-| Fig. 184 — Geometric Data collection (p.221) | Fig. 208 | `unchecked` — `CoordF64 : Translation Vector`, `U32 : Geometric Tabe Flag` [sic], then eleven bit-guarded table blocks (`0x0001` Degree … `0x0400` Weight) | `—` | `n/a: byte-faithful carry` | — | the 9.5 rendering duplicates the `U32 : Geometric Tabe Flag` box; the prose confirms one field |
-| Fig. 185 — "U32: Geometric Tabe Flag" / Geometric Entity Counts (p.222) | Fig. 209 | `unchecked`; 9.5's §7.2.8.1.2.1 is textually mangled — the figure caption and the collection name are crossed. The counts themselves are 4 × `I32` (Surface, MCS Curve, PCS Curve, Point) — note the **MCS-before-PCS order**, the reverse of the JT B-Rep's Fig. 104 | `—` | `n/a: byte-faithful carry` | — | `spec unclear` on the caption; the field list is legible |
-| Fig. 186 — Degree Table (p.223) | Fig. 210 | `unchecked` — one `VecI32{Int32CDP2, Combined:NULL} : Degree Array` + a recovery step | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 182 — Edges Topology Data (p.218) | Fig. 207 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
+| Fig. 183 — Vertices Topology Data (p.220) | **none** | `9.5-only`: 9.5 stores `U8 : Vertex Array Flag` plus, when `& 0x01 != 0`, `VecI32{Int32CDP2, Combined:NULL} : Point Index Difference` and a Recover Point Indices step. **v10 Annex G says outright "Vertices Topology Data is not stored on disk. Instead it is constructed"** — yet v10's own Fig. 196 still draws a `Vertex Count > 0 → Vertices Topology Data` branch | `opaque` | `n/a: byte-faithful carry` | — | a v10 *internal* contradiction; 9.5 is unambiguous. Finding 8 |
+| Fig. 184 — Geometric Data collection (p.221) | Fig. 208 | `unchecked` — `CoordF64 : Translation Vector`, `U32 : Geometric Tabe Flag` [sic], then eleven bit-guarded table blocks (`0x0001` Degree … `0x0400` Weight) | `opaque` | `n/a: byte-faithful carry` | — | the 9.5 rendering duplicates the `U32 : Geometric Tabe Flag` box; the prose confirms one field |
+| Fig. 185 — "U32: Geometric Tabe Flag" / Geometric Entity Counts (p.222) | Fig. 209 | `unchecked`; 9.5's §7.2.8.1.2.1 is textually mangled — the figure caption and the collection name are crossed. The counts themselves are 4 × `I32` (Surface, MCS Curve, PCS Curve, Point) — note the **MCS-before-PCS order**, the reverse of the JT B-Rep's Fig. 104 | `opaque` | `n/a: byte-faithful carry` | — | `spec unclear` on the caption; the field list is legible |
+| Fig. 186 — Degree Table (p.223) | Fig. 210 | `unchecked` — one `VecI32{Int32CDP2, Combined:NULL} : Degree Array` + a recovery step | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 187 — Recover Nurbs Degree (p.224) | Fig. 211 | `unchecked` (recovery flow chart, no bytes) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 188 — Number of Control Points Table (p.225) | Fig. 212 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 188 — Number of Control Points Table (p.225) | Fig. 212 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 189 — Recover Number of Control Points (p.226) | Fig. 213 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 190 — Dimension Table (p.227) | Fig. 214 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 190 — Dimension Table (p.227) | Fig. 214 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 191 — Recover Dimension (p.228) | Fig. 215 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 192 — 3D Unit Vector Table (p.229) | Fig. 216 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 192 — 3D Unit Vector Table (p.229) | Fig. 216 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 193 — "Recover Dimension" (p.230) | Fig. 217 (same wrong title) | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | both revisions mis-title this one; it recovers 3D unit vectors |
-| Fig. 194 — 2D Unit Vector Table (p.231) | Fig. 218 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 194 — 2D Unit Vector Table (p.231) | Fig. 218 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 195 — Recover 2D Unit Vector (p.231) | Fig. 219 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 196 — 3D MCS Point Table (p.232) | Fig. 220 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 196 — 3D MCS Point Table (p.232) | Fig. 220 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 197 — Recover 3D MCS Points (p.233) | Fig. 221 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 198 — Knot Vector Table (p.234) | Fig. 222 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 198 — Knot Vector Table (p.234) | Fig. 222 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 199 — Recover Knot Vectors (p.235) | Fig. 223 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 200 — 1D MCS Table (p.236) | Fig. 224 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 200 — 1D MCS Table (p.236) | Fig. 224 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 201 — Recover 1D MCS Table (p.238) | Fig. 225 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 202 — PCS Value Table (p.239) | Fig. 226 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 202 — PCS Value Table (p.239) | Fig. 226 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 203 — Recover PCS Value Table (p.240) | Fig. 227 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 204 — Radian Table (p.240) | Fig. 228 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | |
+| Fig. 204 — Radian Table (p.240) | Fig. 228 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | |
 | Fig. 205 — Recover Radian Table (p.241) | Fig. 229 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 206 — Weight Table (p.242) | Fig. 230 | `unchecked` | `—` | `n/a: byte-faithful carry` | — | outside the brief's named list but part of §7.2.8.1.2 — recorded so nothing is unnamed |
+| Fig. 206 — Weight Table (p.242) | Fig. 230 | `unchecked` | `opaque` | `n/a: byte-faithful carry` | — | outside the brief's named list but part of §7.2.8.1.2 — recorded so nothing is unnamed |
 | Fig. 207 — Recover Weight Table (p.243) | Fig. 231 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
-| Fig. 208 — Material Attribute Element Properties (p.244) | Fig. 232 | `unchecked` — `I32 : Property Count` then `Property Entry × Property Count`. 9.5's box is corrupted ("I32 : Property CountI32 : Entry Count"); the prose says one count | `—` | `n/a: byte-faithful carry` | — | `spec unclear` on the box; prose is legible |
+| Fig. 208 — Material Attribute Element Properties (p.244) | Fig. 232 | `unchecked` — `I32 : Property Count` then `Property Entry × Property Count`. 9.5's box is corrupted ("I32 : Property CountI32 : Entry Count"); the prose says one count | `opaque` | `n/a: byte-faithful carry` | — | `spec unclear` on the box; prose is legible |
 | Fig. 209 — Information Recovery (p.245) | Fig. 233 | `unchecked` (top-level recovery flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
 | Fig. 210 — PCS Curve Recovery from Surface Domain (p.246) | Fig. 234 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
 | Fig. 211 — MCS Curve Recovery (p.247) | Fig. 235 | `unchecked` (flow chart) | `n/a: derivation, no bytes` | `n/a` | — | |
