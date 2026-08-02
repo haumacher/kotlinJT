@@ -126,7 +126,33 @@ internal class LsgAuthor(
 
         val rootAttributes = attributesOf(scene.root)
         val rootId = nextObjectId++
-        val children = childReferences(scene.root)
+        // spec: 9.5 §9.8 / Figure 245 (v10 §13) — the reference does not mandate a hierarchy,
+        // but names the convention translators follow and warns that "some JT enabled
+        // applications may assume [it] exists": Part Node → Range LOD Node → Group per tier →
+        // Shape Nodes. Geometry never hangs off the Partition itself. `validate` has already
+        // rejected geometry-plus-children, so a geometry-bearing root has no children to lose.
+        // The part is nameless and untransformed on purpose: that is exactly the shape the
+        // Layer 2 read collapse absorbs back into the root, making read → write → read the
+        // identity for a scene the reader would never have produced but a caller may build.
+        val children =
+            if (scene.root.hasGeometry) {
+                val partId = nextObjectId++
+                val lodId = lodStructure(scene.root)
+                graph.add(
+                    PartNodeElement(
+                        partId,
+                        MetaDataNodeData(
+                            GroupNodeData(BaseNodeData(NODE_VERSION, 0u, emptyList()), NODE_VERSION, listOf(lodId)),
+                            NODE_VERSION,
+                        ),
+                        NODE_VERSION,
+                        0,
+                    ),
+                )
+                listOf(partId)
+            } else {
+                childReferences(scene.root)
+            }
         val nodeCount = graph.count { it is NodeElement } + 1
         val partition =
             PartitionNodeElement(
