@@ -236,7 +236,11 @@ internal fun ByteWriter.writeTestVersionNumber(
     if (generation == LsgGeneration.V9) writeI16(version.toShort()) else writeU8(version.toUByte())
 }
 
-/** Base Light Data fields (Figure 57). */
+/**
+ * Base Light Data fields (v10 Figure 57 / 9.5 Figure 54). The alpha-factor pair is the v10
+ * placement only: 9.5 Figure 54 (p.84) ends at Shadow Opacity and hangs the pair off the light
+ * element instead, gated on the element's version (9.5 Figures 53/55/56).
+ */
 internal fun ByteWriter.writeTestBaseLightData(generation: LsgGeneration) {
     writeTestBaseAttributeData(generation)
     writeTestVersionNumber(generation)
@@ -247,6 +251,8 @@ internal fun ByteWriter.writeTestBaseLightData(generation: LsgGeneration) {
     writeI32(2) // coord system
     writeU8(1u) // shadow caster flag
     writeF32(0.75f) // shadow opacity
-    writeF32(1f) // non-shadow alpha factor
-    writeF32(0.5f) // shadow alpha factor
+    if (generation != LsgGeneration.V9) {
+        writeF32(1f) // non-shadow alpha factor
+        writeF32(0.5f) // shadow alpha factor
+    }
 }

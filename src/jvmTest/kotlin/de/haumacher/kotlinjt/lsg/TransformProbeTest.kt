@@ -97,7 +97,9 @@ class TransformProbeTest {
 
                 val partition = document.graphElements.filterIsInstance<PartitionNodeElement>().firstOrNull()
                 assumeTrue(partition != null, "no partition node — probe not applicable")
-                val box = partition!!.transformedBBox
+                // The declared extent, not the raw transformed slot: 9.5 Figure 14 puts a
+                // reserved field there when partition flag bit 0 is set (DESIGN.md delta 43).
+                val box = checkNotNull(partition!!.extentBBox) { "partition declares no extent box" }
                 val diagonal =
                     kotlin.math.sqrt(
                         (

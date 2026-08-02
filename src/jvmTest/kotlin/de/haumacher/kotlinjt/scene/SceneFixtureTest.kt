@@ -360,7 +360,8 @@ class SceneFixtureTest {
                     val view = Layer1View(file)
                     val partition = view.lsg?.graphElements?.filterIsInstance<PartitionNodeElement>()?.firstOrNull()
                     assumeTrue(partition != null, "no partition node")
-                    val box = partition!!.transformedBBox
+                    // The declared extent, not the raw transformed slot (DESIGN.md delta 43).
+                    val box = checkNotNull(partition!!.extentBBox) { "partition declares no extent box" }
                     val diagonal =
                         kotlin.math.sqrt(
                             (

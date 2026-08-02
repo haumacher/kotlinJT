@@ -156,7 +156,8 @@ class WriterProbeTest {
                 val document = LsgDocument.decode(elementData!!, file.header.version, file.header.byteOrder).document
 
                 val partition = document.graphElements.filterIsInstance<PartitionNodeElement>().single()
-                val world = partition.transformedBBox
+                // The declared extent, not the raw transformed slot (DESIGN.md delta 43).
+                val world = checkNotNull(partition.extentBBox) { "partition declares no extent box" }
                 val diagonal =
                     kotlin.math.sqrt(
                         (

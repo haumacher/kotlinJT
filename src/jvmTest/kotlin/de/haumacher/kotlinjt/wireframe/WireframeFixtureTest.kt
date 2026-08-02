@@ -194,7 +194,8 @@ class WireframeFixtureTest {
                         file.decodeLsg()?.document?.graphElements
                             ?.filterIsInstance<de.haumacher.kotlinjt.lsg.PartitionNodeElement>()?.firstOrNull()
                     assumeTrue(partition != null, "no partition node to take a world box from")
-                    val box = partition!!.transformedBBox
+                    // The declared extent, not the raw transformed slot (DESIGN.md delta 43).
+                    val box = checkNotNull(partition!!.extentBBox) { "partition declares no extent box" }
                     // Wireframe reps are stored in part-local coordinates and the fixtures place
                     // parts with translations, so the check is a generous sanity bound: no
                     // coordinate may be wilder than ten times the model's own extent.

@@ -393,6 +393,19 @@ private fun writeBasePropertyAtomData(
     w.writeU32(data.stateFlags)
 }
 
+/**
+ * Base Light Data (v10 Figure 57 / 9.5 Figure 54, p.84).
+ *
+ * The Base Attribute Data collection is read *first*, following the convention every other
+ * attribute element uses — not because a figure says so: v10 Figure 57 draws a stray
+ * "Logical Element Header Compressed" box in that slot (after the version number) and 9.5
+ * Figure 54 omits the collection entirely, so both generations' drawings are corrupt in the
+ * same place. `spec unclear`, recorded in DESIGN.md; presence is not in doubt, only position,
+ * and no fixture in the corpus carries a light to settle it.
+ *
+ * The trailing alpha-factor pair is v10's placement only. 9.5 Figure 54 ends at Shadow Opacity
+ * and hangs the pair off the light element instead (9.5 Figure 55, gated on element version 2).
+ */
 private fun readBaseLightData(
     r: ByteReader,
     g: LsgGeneration,
@@ -407,8 +420,7 @@ private fun readBaseLightData(
         r.readI32(),
         r.readU8().toInt(),
         r.readF32(),
-        r.readF32(),
-        r.readF32(),
+        if (g == LsgGeneration.V9) null else ShadowParameters(r.readF32(), r.readF32()),
     )
 
 private fun writeBaseLightData(
@@ -425,8 +437,42 @@ private fun writeBaseLightData(
     w.writeI32(data.coordSystem)
     w.writeU8(data.shadowCasterFlag.toUByte())
     w.writeF32(data.shadowOpacity)
-    w.writeF32(data.nonShadowAlphaFactor)
-    w.writeF32(data.shadowAlphaFactor)
+    if (g != LsgGeneration.V9) {
+        // v10 Figure 57 has no guard here: a model that carries the 9.5 placement instead
+        // still owes the reader two factors, and 1.0 is the neutral "no alpha tinting" pair.
+        val shadow = data.shadowParameters ?: ShadowParameters(1f, 1f)
+        w.writeF32(shadow.nonShadowAlphaFactor)
+        w.writeF32(shadow.shadowAlphaFactor)
+    }
+}
+
+/**
+ * The 9.5-only element tail of the light family (9.5 Figures 53 and 56): the Shadow Parameters
+ * collection, drawn on a branch guarded `Version Number == 2` — which under §9.4's append-only
+ * local versions means "belongs to local version 2", i.e. present from version 2 upwards.
+ *
+ * The reader does not test the version: the pair ends the element body, so the remaining length
+ * is an exact oracle (0 or 8 bytes), and presence is recorded in the model rather than
+ * re-derived on write — the same treatment the guarded vertex bindings get (DESIGN.md, "The
+ * length oracle"). A length that is neither refuses the typed decode through the frame's
+ * full-consumption check, named, never guessed.
+ */
+private fun readShadowParametersTail(
+    r: ByteReader,
+    g: LsgGeneration,
+): ShadowParameters? = if (g == LsgGeneration.V9 && r.remaining >= 8) ShadowParameters(r.readF32(), r.readF32()) else null
+
+private fun writeShadowParametersTail(
+    w: ByteWriter,
+    g: LsgGeneration,
+    parameters: ShadowParameters?,
+) {
+    if (g == LsgGeneration.V9) {
+        parameters?.let {
+            w.writeF32(it.nonShadowAlphaFactor)
+            w.writeF32(it.shadowAlphaFactor)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +531,14 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
         val version = if (ctx.generation == LsgGeneration.V10_5) r.readVersionNumber(ctx.generation) else null
         val flags = r.readI32()
         val fileName = r.readMbString()
-        val transformedBBox = r.readBBoxF32()
+        // One BBoxF32 sits here in both generations, but its identity differs: v10 Figure 23
+        // always stores the Transformed BBox, while 9.5 Figure 14 (p.36, read from the
+        // rendered page — the layout dump loses the branch) puts `BBoxF32 : Reserved Field` on
+        // the main path and reaches `BBoxF32 : Transformed BBox` only through the branch
+        // guarded `(Partition Flags & 0x00000001) == 0`. Same byte count either way, which is
+        // why no fixture ever complained; the model discriminates the two (DESIGN.md delta 43).
+        val middleBBox = r.readBBoxF32()
+        val storesReserved = ctx.generation == LsgGeneration.V9 && flags and 1 != 0
         val area = r.readF32()
         val vertexCountRange = r.readCountRange()
         val nodeCountRange = r.readCountRange()
@@ -496,8 +549,10 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
         // full-consumption check turns every other combination into an opaque carry.
         val untransformedBBox = if (flags and 1 != 0 && r.remaining >= 24) r.readBBoxF32() else null
         return PartitionNodeElement(
-            objectId, group, version, flags, fileName, transformedBBox, area,
+            objectId, group, version, flags, fileName,
+            if (storesReserved) null else middleBBox, area,
             vertexCountRange, nodeCountRange, polygonCountRange, untransformedBBox,
+            if (storesReserved) middleBBox else null,
         )
     }
 
@@ -513,7 +568,7 @@ private object PartitionNodeCodec : LsgElementCodec(ObjectTypeIds.PARTITION_NODE
         }
         w.writeI32(element.partitionFlags)
         w.writeMbString(element.fileName)
-        w.writeBBoxF32(element.transformedBBox)
+        w.writeBBoxF32(element.middleBBox)
         w.writeF32(element.area)
         w.writeCountRange(element.vertexCountRange)
         w.writeCountRange(element.nodeCountRange)
@@ -861,11 +916,16 @@ private object MaterialAttributeCodec : LsgElementCodec(ObjectTypeIds.MATERIAL_A
         val version = r.readVersionNumber(ctx.generation)
         val dataFlags = r.readU16().toInt()
         if (ctx.generation == LsgGeneration.V9 && dataFlags and 0x000F != 0) {
-            // The v10 inhibit table hints at "Common RGB Value" compact colour storage in
-            // earlier generations; its v9 wire layout is not established. Refuse rather
-            // than misread — the element is then carried opaquely with a named note.
+            // 9.5 §7.2.1.1.2.2 (p.62) documents exactly the four bit groups v10 Table 18 does
+            // — 0x0010 Blending, 0x0020 Override Vertex Colours, 0x07C0 Source Blend Factor,
+            // 0xF800 Destination Blend Factor — and declares every other bit reserved. (This
+            // comment used to blame a "Common RGB Value" compact colour encoding. There is
+            // none: those names are a shared editorial artifact of *both* generations'
+            // field-inhibit tables, and 9.5 Figure 42 has no such field.) A set reserved bit
+            // means the layout of what follows is not established, so refuse rather than
+            // misread — the element is then carried opaquely with a named note.
             throw JtFormatException(
-                "JT9 material data flags 0x${dataFlags.toString(16)} indicate compact colour storage; layout not established",
+                "JT9 material data flags 0x${dataFlags.toString(16)} set bits 9.5 p.62 declares reserved; layout not established",
             )
         }
         val ambient = r.readRgba()
@@ -961,7 +1021,7 @@ private object LightSetAttributeCodec :
 }
 
 private object InfiniteLightAttributeCodec :
-    LsgElementCodec(ObjectTypeIds.INFINITE_LIGHT_ATTRIBUTE, "Infinite Light Attribute Element", 3, v9Layout = false) {
+    LsgElementCodec(ObjectTypeIds.INFINITE_LIGHT_ATTRIBUTE, "Infinite Light Attribute Element", 3) {
     override fun decode(
         r: ByteReader,
         ctx: LsgDecodeContext,
@@ -970,12 +1030,14 @@ private object InfiniteLightAttributeCodec :
         val baseLight = readBaseLightData(r, ctx.generation)
         val version = r.readVersionNumber(ctx.generation)
         val direction = r.readVec3F32()
+        val shadow = readShadowParametersTail(r, ctx.generation)
         val tail = r.readAttributeTail(ctx.generation)
         return InfiniteLightAttributeElement(
             objectId,
             baseLight.copy(baseAttribute = baseLight.baseAttribute.copy(reservedTail = tail)),
             version,
             direction,
+            shadow,
         )
     }
 
@@ -988,12 +1050,13 @@ private object InfiniteLightAttributeCodec :
         writeBaseLightData(w, g, element.baseLight)
         w.writeVersionNumber(g, element.version)
         w.writeVec3F32(element.direction)
+        writeShadowParametersTail(w, g, element.shadowParameters)
         w.writeAttributeTail(g, element.baseLight.baseAttribute.reservedTail)
     }
 }
 
 private object PointLightAttributeCodec :
-    LsgElementCodec(ObjectTypeIds.POINT_LIGHT_ATTRIBUTE, "Point Light Attribute Element", 3, v9Layout = false) {
+    LsgElementCodec(ObjectTypeIds.POINT_LIGHT_ATTRIBUTE, "Point Light Attribute Element", 3) {
     override fun decode(
         r: ByteReader,
         ctx: LsgDecodeContext,
@@ -1006,6 +1069,7 @@ private object PointLightAttributeCodec :
         val spreadAngle = r.readF32()
         val spotDirection = r.readVec3F32()
         val spotIntensity = r.readI32()
+        val shadow = readShadowParametersTail(r, ctx.generation)
         val tail = r.readAttributeTail(ctx.generation)
         return PointLightAttributeElement(
             objectId,
@@ -1016,6 +1080,7 @@ private object PointLightAttributeCodec :
             spreadAngle,
             spotDirection,
             spotIntensity,
+            shadow,
         )
     }
 
@@ -1034,6 +1099,7 @@ private object PointLightAttributeCodec :
         w.writeF32(element.spreadAngle)
         w.writeVec3F32(element.spotDirection)
         w.writeI32(element.spotIntensity)
+        writeShadowParametersTail(w, g, element.shadowParameters)
         w.writeAttributeTail(g, element.baseLight.baseAttribute.reservedTail)
     }
 }
@@ -1115,8 +1181,30 @@ private val IDENTITY_4X4: List<Double> =
         0.0, 0.0, 0.0, 1.0,
     )
 
+/**
+ * Resolves the width of the stored matrix elements from the body itself: the values are the
+ * last field group of the element, so `popcount(mask) × width` plus the generation's attribute
+ * tail must equal what is left. 9.5 Figure 61 types them `F32` and v10 Figure 63 `F64`, and the
+ * two readings differ only in length — the lenient half of the doctrine takes the length as the
+ * evidence and records what it found; where the length settles nothing (`mask == 0`, or a body
+ * that fits neither) the generation's documented width stands and the frame's full-consumption
+ * check names any residue.
+ */
+private fun resolveTransformValueWidth(
+    r: ByteReader,
+    g: LsgGeneration,
+    mask: Int,
+): TransformValueWidth {
+    val documented = if (g == LsgGeneration.V9) TransformValueWidth.F32 else TransformValueWidth.F64
+    val stored = mask.countOneBits()
+    if (stored == 0) return documented
+    val tail = if (g == LsgGeneration.V10_5) 4 else 0
+    val fits = TransformValueWidth.entries.filter { stored * it.bytes + tail == r.remaining }
+    return fits.singleOrNull() ?: documented
+}
+
 private object GeometricTransformAttributeCodec :
-    LsgElementCodec(ObjectTypeIds.GEOMETRIC_TRANSFORM_ATTRIBUTE, "Geometric Transform Attribute Element", 3, v9Layout = false) {
+    LsgElementCodec(ObjectTypeIds.GEOMETRIC_TRANSFORM_ATTRIBUTE, "Geometric Transform Attribute Element", 3) {
     override fun decode(
         r: ByteReader,
         ctx: LsgDecodeContext,
@@ -1125,16 +1213,24 @@ private object GeometricTransformAttributeCodec :
         val base = readBaseAttributeData(r, ctx.generation)
         val version = r.readVersionNumber(ctx.generation)
         val mask = r.readU16().toInt()
+        val width = resolveTransformValueWidth(r, ctx.generation, mask)
         val values = IDENTITY_4X4.toMutableList()
         var bits = mask
         for (i in 0 until 16) {
             if (bits and 0x8000 != 0) {
-                values[i] = r.readF64()
+                values[i] = if (width == TransformValueWidth.F32) r.readF32().toDouble() else r.readF64()
             }
             bits = bits shl 1
         }
         val tail = r.readAttributeTail(ctx.generation)
-        return GeometricTransformAttributeElement(objectId, base.copy(reservedTail = tail), version, mask, Mx4F64(values))
+        return GeometricTransformAttributeElement(
+            objectId,
+            base.copy(reservedTail = tail),
+            version,
+            mask,
+            Mx4F64(values),
+            width,
+        )
     }
 
     override fun encode(
@@ -1149,7 +1245,8 @@ private object GeometricTransformAttributeCodec :
         var bits = element.storedValuesMask
         for (i in 0 until 16) {
             if (bits and 0x8000 != 0) {
-                w.writeF64(element.matrix.values[i])
+                val value = element.matrix.values[i]
+                if (element.valueWidth == TransformValueWidth.F32) w.writeF32(value.toFloat()) else w.writeF64(value)
             }
             bits = bits shl 1
         }
@@ -1291,7 +1388,10 @@ private fun writeTextureEnvironment(
     w.writeMx4F32(value.textureTransform)
 }
 
-private fun readImageFormatDescription(r: ByteReader): ImageFormatDescription =
+private fun readImageFormatDescription(
+    r: ByteReader,
+    sharedImageFlagWidth: SharedImageFlagWidth,
+): ImageFormatDescription =
     ImageFormatDescription(
         r.readU32(),
         r.readU32(),
@@ -1301,8 +1401,11 @@ private fun readImageFormatDescription(r: ByteReader): ImageFormatDescription =
         r.readI16().toInt(),
         r.readI16().toInt(),
         r.readI16().toInt(),
-        r.readU32(),
+        // 9.5 Figure 48 types the flag U8, v10 Figure 53 U32 — three bytes immediately before
+        // the mipmaps count, so the width is resolved from the body, not from the generation.
+        if (sharedImageFlagWidth == SharedImageFlagWidth.U8) r.readU8().toUInt() else r.readU32(),
         r.readI16().toInt(),
+        sharedImageFlagWidth,
     )
 
 private fun writeImageFormatDescription(
@@ -1317,12 +1420,51 @@ private fun writeImageFormatDescription(
     w.writeI16(value.height.toShort())
     w.writeI16(value.depth.toShort())
     w.writeI16(value.numberBorderTexels.toShort())
-    w.writeU32(value.sharedImageFlag)
+    if (value.sharedImageFlagWidth == SharedImageFlagWidth.U8) {
+        w.writeU8(value.sharedImageFlag.toUByte())
+    } else {
+        w.writeU32(value.sharedImageFlag)
+    }
     w.writeI16(value.mipmapsCount.toShort())
 }
 
-private fun readInlineTextureImage(r: ByteReader): InlineTextureImage {
-    val format = readImageFormatDescription(r)
+/**
+ * Reads the element's whole inline image list, resolving the Shared Image Flag's width from the
+ * bytes: the list is the last field group of a Texture Image Attribute Element, so exactly one
+ * of the two candidate widths (9.5 `U8`, v10 `U32`) makes it consume the body. The generation's
+ * documented width is tried first; the width that worked is recorded on every image, so
+ * re-serialization is a projection. If neither width balances, the typed decode is refused by
+ * name rather than producing a mipmap list read three bytes out of step.
+ */
+private fun readInlineTextureImages(
+    r: ByteReader,
+    g: LsgGeneration,
+    imageCount: Int,
+    tailBytes: Int,
+): List<InlineTextureImage> {
+    val documented = if (g == LsgGeneration.V9) SharedImageFlagWidth.U8 else SharedImageFlagWidth.U32
+    val mark = r.position
+    var firstFailure: String? = null
+    for (width in listOf(documented) + SharedImageFlagWidth.entries.filter { it != documented }) {
+        r.position = mark
+        try {
+            val images = List(imageCount) { readInlineTextureImage(r, width) }
+            if (r.remaining == tailBytes) return images
+            firstFailure = firstFailure ?: "$width leaves ${r.remaining} bytes, expected $tailBytes"
+        } catch (e: JtFormatException) {
+            firstFailure = firstFailure ?: "$width: ${e.message}"
+        }
+    }
+    throw JtFormatException(
+        "the inline texture image list fits neither the 9.5 U8 nor the v10 U32 Shared Image Flag width ($firstFailure)",
+    )
+}
+
+private fun readInlineTextureImage(
+    r: ByteReader,
+    sharedImageFlagWidth: SharedImageFlagWidth,
+): InlineTextureImage {
+    val format = readImageFormatDescription(r, sharedImageFlagWidth)
     val totalSize = r.readI32()
     if (format.mipmapsCount < 0) throw JtFormatException("negative mipmaps count ${format.mipmapsCount}")
     val mipmaps =
@@ -1370,7 +1512,13 @@ private object TextureImageAttributeCodec :
         val inlineImages: List<InlineTextureImage>
         val externalNames: List<String>
         if (inlineFlag == 1) {
-            inlineImages = List(imageCount) { readInlineTextureImage(r) }
+            inlineImages =
+                readInlineTextureImages(
+                    r,
+                    ctx.generation,
+                    imageCount,
+                    tailBytes = if (ctx.generation == LsgGeneration.V10_5) 4 else 0,
+                )
             externalNames = emptyList()
         } else {
             inlineImages = emptyList()

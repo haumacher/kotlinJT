@@ -272,6 +272,10 @@ private class SceneBuilder(
         what: String,
     ): Boolean {
         if (base.stateFlags and 0x02 != 0) semanticsDetails.add("$what sets the Accumulation Force flag")
+        // JT 9 expresses attribute-wide finality in State Flags bit 0x01; v10 declares that bit
+        // unused and uses the per-field word below. Reading the bit unconditionally would
+        // invent a v10 meaning, ignoring it would drop a JT 9 one — hence [accumulationFinal].
+        if (base.accumulationFinal) semanticsDetails.add("$what sets the Accumulation Final flag")
         if (base.fieldInhibitFlags != 0u) semanticsDetails.add("$what sets field inhibit flags")
         if ((base.fieldFinalFlags ?: 0u) != 0u) semanticsDetails.add("$what sets field final flags")
         return base.stateFlags and 0x04 != 0

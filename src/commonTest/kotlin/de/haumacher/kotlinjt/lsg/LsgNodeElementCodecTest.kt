@@ -74,6 +74,64 @@ class LsgNodeElementCodecTest {
             assertNull(element.untransformedBBox)
         }
 
+    // 9.5 Figure 14 (p.36, read from the rendered page) puts `BBoxF32 : Reserved Field` on the
+    // main path and reaches `BBoxF32 : Transformed BBox` only through the branch guarded
+    // `(Partition Flags & 0x00000001) == 0`. Exactly one box is on the wire either way, so the
+    // byte count matches v10 in both branches and only the *identity* differs — the reason this
+    // went unnoticed. The middle box here is deliberately the empty-box sentinel a real 9.5
+    // producer writes into the reserved slot: whichever field claims it must not be an extent.
+    // spec: 9.5 Figure 14
+    @Test
+    fun partitionNodeMiddleBoxIsReservedInJt9WhenBitZeroIsSet() =
+        forBothOrders { order ->
+            fun frame(
+                flags: Int,
+                generation: LsgGeneration = LsgGeneration.V9,
+            ) = lsgFrame(order, ObjectTypeIds.PARTITION_NODE, 1, 0) {
+                writeTestGroupNodeData(generation)
+                writeI32(flags)
+                writeI32(0) // empty file name
+                repeat(3) { writeF32(Float.MAX_VALUE) }
+                repeat(3) { writeF32(-Float.MAX_VALUE) } // the empty-box sentinel
+                writeF32(100f)
+                repeat(6) { writeI32(1) } // three count ranges
+                if (flags and 1 != 0) {
+                    writeF32(-1f)
+                    writeF32(-2f)
+                    writeF32(-3f)
+                    writeF32(1f)
+                    writeF32(2f)
+                    writeF32(3f) // untransformed bbox: the real extent
+                }
+            }
+
+            val big = f32(Float.MAX_VALUE)
+            val sentinel = BBoxF32(Vec3F32(big, big, big), Vec3F32(-big, -big, -big))
+            val extent = BBoxF32(Vec3F32(-1f, -2f, -3f), Vec3F32(1f, 2f, 3f))
+
+            // Bit 0 set: the middle box is the Reserved Field, and the declared extent is the
+            // trailing untransformed box — never the sentinel.
+            val withBit = roundTripTyped(frame(1), order, LsgGeneration.V9) as PartitionNodeElement
+            assertEquals(sentinel, withBit.reservedBBox)
+            assertNull(withBit.transformedBBox)
+            assertEquals(extent, withBit.untransformedBBox)
+            assertEquals(extent, withBit.extentBBox)
+
+            // Bit 0 clear: the branch is taken, the same bytes are the Transformed BBox, and
+            // no untransformed box follows.
+            val withoutBit = roundTripTyped(frame(0), order, LsgGeneration.V9) as PartitionNodeElement
+            assertNull(withoutBit.reservedBBox)
+            assertEquals(sentinel, withoutBit.transformedBBox)
+            assertNull(withoutBit.untransformedBBox)
+
+            // v10 Figure 23 has no reserved field: the same bytes are the transformed box even
+            // with bit 0 set.
+            val v10 =
+                roundTripTyped(frame(1, LsgGeneration.V10), order, LsgGeneration.V10) as PartitionNodeElement
+            assertNull(v10.reservedBBox)
+            assertEquals(sentinel, v10.transformedBBox)
+        }
+
     // spec: Figure 25
     // spec: Figure 26
     @Test

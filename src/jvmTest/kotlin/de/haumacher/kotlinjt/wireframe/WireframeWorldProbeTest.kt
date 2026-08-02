@@ -61,7 +61,11 @@ class WireframeWorldProbeTest {
                 assumeTrue(reps.isNotEmpty(), "fixture carries no wireframe reps — probe not applicable")
 
                 val lsg = LsgDocument.decode(file.lsgSegment()!!.elementData!!, file.header.version, file.header.byteOrder)
-                val box = lsg.document.graphElements.filterIsInstance<PartitionNodeElement>().first().transformedBBox
+                // The declared extent, not the raw transformed slot (DESIGN.md delta 43).
+                val box =
+                    checkNotNull(lsg.document.graphElements.filterIsInstance<PartitionNodeElement>().first().extentBBox) {
+                        "partition declares no extent box"
+                    }
                 val diagonal =
                     sqrt(
                         (

@@ -122,12 +122,28 @@ data class VertexShapeData(
 )
 
 /**
- * Base Attribute Data (Figure 46). JT 10 added the Field Final Flags word; JT 9 attributes
- * carry `null` there (fixture-verified).
+ * Base Attribute Data (v10 Figure 46 / 9.5 Figure 39). JT 10 added the Field Final Flags word;
+ * JT 9 attributes carry `null` there (9.5 Figure 39, p.55, has three fields and no fourth).
  */
 data class BaseAttributeData(
     val version: Int,
+    /**
+     * State Flags — the same byte in both generations, but bit `0x01` means opposite things:
+     * 9.5 §7.2.1.1.2.1.1 (p.55) assigns it the attribute-wide **Accumulation Final** flag,
+     * while v10 Table 15 declares it **Unused**, having moved per-field finals into
+     * [fieldFinalFlags]. Read it through [accumulationFinal], never directly. Bits `0x02`
+     * Force, `0x04` Ignore and `0x08` Persistable are identical in both.
+     */
     val stateFlags: Int,
+    /**
+     * Field Inhibit Flags — one `U32` with the same layout in both generations, but the
+     * per-element *bit assignments* differ: 9.5 p.60 gives the Material element a
+     * "Diffuse Color and Alpha (Legacy)" row at bit 1 that v10 Table 16 lacks, so v10's
+     * assignments for bits 1–8 are 9.5's shifted down by one (the same shape of shift affects
+     * the Texture Image element: 9.5 puts Internal Compression Level on bit 8, v10 on bit 7).
+     * The bits are therefore carried verbatim and never interpreted here; any interpretation
+     * has to branch on the generation.
+     */
     val fieldInhibitFlags: UInt,
     /** On the wire in JT 10 only. */
     val fieldFinalFlags: UInt?,
@@ -138,7 +154,18 @@ data class BaseAttributeData(
      * DESIGN.md delta 24). `null` in the V9/V10 generations.
      */
     val reservedTail: Int? = null,
-)
+) {
+    /**
+     * Whether this attribute declares its accumulation *final* through the attribute-wide
+     * State Flags bit — a JT 9 concept only. v10 Table 15 declares bit `0x01` Unused and
+     * expresses finality per field in [fieldFinalFlags], so reading the bit on a v10 attribute
+     * would invent a meaning the document does not give it. The generation is legible from the
+     * model itself: [fieldFinalFlags] is non-null exactly for the generations that carry the
+     * word (9.5 Figure 39 has no such field).
+     */
+    val accumulationFinal: Boolean
+        get() = fieldFinalFlags == null && (stateFlags and 0x01) != 0
+}
 
 /** Base Property Atom Data (Figure 70). */
 data class BasePropertyAtomData(
@@ -182,7 +209,18 @@ data class BaseNodeElement(
     override val objectTypeId: Guid get() = ObjectTypeIds.BASE_NODE
 }
 
-/** Partition Node Element (Figure 23): an external-file reference or the LSG root. */
+/**
+ * Partition Node Element (v10 Figure 23 / 9.5 Figure 14): an external-file reference or the
+ * LSG root.
+ *
+ * Exactly one `BBoxF32` sits between the file name and the area, and *which* one it is differs
+ * by generation (DESIGN.md delta 43): v10 always stores the Transformed BBox; 9.5 Figure 14
+ * puts a `BBoxF32 : Reserved Field` on the main path and reaches
+ * `BBoxF32 : Transformed BBox` only through the branch guarded
+ * `(Partition Flags & 0x00000001) == 0`. The byte count is the same either way, so the two
+ * readings are indistinguishable by length — which is why the model discriminates them:
+ * [reservedBBox] and [transformedBBox] are never both set, and never both absent.
+ */
 data class PartitionNodeElement(
     override val objectId: Int,
     val group: GroupNodeData,
@@ -190,7 +228,12 @@ data class PartitionNodeElement(
     val version: Int?,
     val partitionFlags: Int,
     val fileName: String,
-    val transformedBBox: BBoxF32,
+    /**
+     * The NCS-aligned transformed geometry extent — on the wire in v10 unconditionally, and in
+     * 9.5 only when [partitionFlags] bit 0 is *clear*. `null` when the file stored
+     * [reservedBBox] in this slot instead.
+     */
+    val transformedBBox: BBoxF32?,
     val area: Float,
     val vertexCountRange: CountRange,
     val nodeCountRange: CountRange,
@@ -200,6 +243,14 @@ data class PartitionNodeElement(
      * observed (Siemens DM 9.8) sets the bit without storing the box (DESIGN.md delta 23).
      */
     val untransformedBBox: BBoxF32?,
+    /**
+     * 9.5 Figure 14's `BBoxF32 : Reserved Field`, stored in the transformed box's slot when
+     * [partitionFlags] bit 0 is set — "reserved for future JT format expansion", and in both
+     * 9.5 fixtures the empty-box sentinel (`min = +FLT_MAX`, `max = −FLT_MAX`), which is not
+     * an extent and must never be read as one. Always `null` in the JT 10 generations, which
+     * have no such field. Declared last so that JT 10 construction sites need not name it.
+     */
+    val reservedBBox: BBoxF32? = null,
 ) : NodeElement() {
     init {
         // Bit 0 announces the box (Figure 23/Table 11) — but the 10.5 producer observed
@@ -208,7 +259,25 @@ data class PartitionNodeElement(
         require(untransformedBBox == null || partitionFlags and 1 != 0) {
             "an untransformed bounding box requires partition flag bit 0"
         }
+        require((reservedBBox == null) != (transformedBBox == null)) {
+            "a partition node stores exactly one middle bounding box: the reserved field (9.5 " +
+                "Figure 14, partition flag bit 0 set) or the transformed box"
+        }
+        require(reservedBBox == null || partitionFlags and 1 != 0) {
+            "9.5 Figure 14 reaches the reserved bounding box only with partition flag bit 0 set"
+        }
     }
+
+    /** The single box the wire carries between File Name and Area, whatever its identity. */
+    internal val middleBBox: BBoxF32 get() = reservedBBox ?: transformedBBox!!
+
+    /**
+     * The box a consumer may read as this partition's declared geometry extent: the
+     * Transformed BBox where the file stores one, else the Untransformed BBox that 9.5 stores
+     * in its place when the reserved field occupies the transformed slot. `null` when the node
+     * declares no extent at all. Never the reserved field — that one is not an extent.
+     */
+    val extentBBox: BBoxF32? get() = transformedBBox ?: untransformedBBox
 
     override val objectTypeId: Guid get() = ObjectTypeIds.PARTITION_NODE
     override val baseNode: BaseNodeData get() = group.base
@@ -440,9 +509,31 @@ data class LightSetAttributeElement(
 }
 
 /**
- * Base Light Data (Figure 57). The figure's box drawing is garbled in the reference (it shows
- * a stray element-header box); read here as base attribute data followed by the documented
- * fields, per the attribute-element convention — spec-derived, not yet fixture-verified.
+ * Shadow Parameters (9.5 Figure 55, p.85): the matched pair of alpha factors that govern how
+ * a shadow-casting light tints the areas it does and does not illuminate.
+ *
+ * The pair exists in both generations but hangs off different collections: v10 Figure 57 puts
+ * it *inside* Base Light Data, unconditionally ([BaseLightData.shadowParameters]); 9.5 attaches
+ * it to the light **element**, after the element's own payload and only from element version 2
+ * ([InfiniteLightAttributeElement.shadowParameters],
+ * [PointLightAttributeElement.shadowParameters]).
+ */
+data class ShadowParameters(
+    val nonShadowAlphaFactor: Float,
+    val shadowAlphaFactor: Float,
+)
+
+/**
+ * Base Light Data (v10 Figure 57 / 9.5 Figure 54).
+ *
+ * **Where this collection starts is `spec unclear` in both generations** and the library rests
+ * on the attribute-element convention, not on a figure or a fixture: v10 Figure 57's second box
+ * is labelled "Logical Element Header Compressed" where Base Attribute Data belongs (and sits
+ * *after* the version number), while 9.5 Figure 54 omits the Base Attribute Data box
+ * altogether. Both drawings are corrupt in the same slot, no fixture in the corpus carries a
+ * light, and the two candidate placements have the same width — so nothing on the wire can
+ * settle it. The library reads Base Attribute Data first, as every other attribute element
+ * does; the presence of the collection is not in doubt, only its position.
  */
 data class BaseLightData(
     val baseAttribute: BaseAttributeData,
@@ -454,16 +545,29 @@ data class BaseLightData(
     val coordSystem: Int,
     val shadowCasterFlag: Int,
     val shadowOpacity: Float,
-    val nonShadowAlphaFactor: Float,
-    val shadowAlphaFactor: Float,
+    /**
+     * The v10 Figure 57 placement of the alpha-factor pair — unconditional there, and `null`
+     * for the JT 9 generation, whose Figure 54 ends at Shadow Opacity and carries the pair on
+     * the element instead.
+     */
+    val shadowParameters: ShadowParameters?,
 )
 
-/** Infinite Light Attribute Element (Figure 56). */
+/** Infinite Light Attribute Element (v10 Figure 56 / 9.5 Figure 53). */
 data class InfiniteLightAttributeElement(
     override val objectId: Int,
     val baseLight: BaseLightData,
     val version: Int,
     val direction: Vec3F32,
+    /**
+     * 9.5 Figure 53's guarded tail — the Shadow Parameters collection the figure mislabels
+     * "Shadow Opacity" (its own caption points at §7.2.1.1.2.6.2 Shadow Parameters), gated
+     * `Version Number == 2` and therefore present from element version 2 upwards. Presence is
+     * a model fact resolved from the body's remaining length, never re-derived from the
+     * version on write, so a version-1 light cannot round-trip as a version-2 one. Always
+     * `null` in the JT 10 generations, where the pair lives in Base Light Data.
+     */
+    val shadowParameters: ShadowParameters? = null,
 ) : AttributeElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.INFINITE_LIGHT_ATTRIBUTE
 }
@@ -475,7 +579,7 @@ data class AttenuationCoefficients(
     val quadratic: Float,
 )
 
-/** Point Light Attribute Element (Figure 58). */
+/** Point Light Attribute Element (v10 Figure 58 / 9.5 Figure 56). */
 data class PointLightAttributeElement(
     override val objectId: Int,
     val baseLight: BaseLightData,
@@ -485,6 +589,8 @@ data class PointLightAttributeElement(
     val spreadAngle: Float,
     val spotDirection: Vec3F32,
     val spotIntensity: Int,
+    /** 9.5 Figure 56's guarded tail — see [InfiniteLightAttributeElement.shadowParameters]. */
+    val shadowParameters: ShadowParameters? = null,
 ) : AttributeElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.POINT_LIGHT_ATTRIBUTE
 }
@@ -512,9 +618,21 @@ data class PointstyleAttributeElement(
 }
 
 /**
- * Geometric Transform Attribute Element (Figure 63): a 4×4 homogeneous transform, stored
- * sparsely. [matrix] is the full row-major matrix; [storedValuesMask] records which of its
- * elements are on the wire (bit 15 = first element), so re-encoding is byte-identical.
+ * The wire width of one stored Geometric Transform matrix element: `F32` in 9.5 Figure 61
+ * (p.91 — figure box and prose heading alike), `F64` in v10 Figure 63. Widening an `F32` into
+ * the model's `Double` is exact but not reversible without knowing which width was read, so the
+ * element records it.
+ */
+enum class TransformValueWidth(val bytes: Int) {
+    F32(4),
+    F64(8),
+}
+
+/**
+ * Geometric Transform Attribute Element (v10 Figure 63 / 9.5 Figure 61): a 4×4 homogeneous
+ * transform, stored sparsely. [matrix] is the full row-major matrix; [storedValuesMask] records
+ * which of its elements are on the wire (bit 15 = first element), so re-encoding is
+ * byte-identical.
  */
 data class GeometricTransformAttributeElement(
     override val objectId: Int,
@@ -522,6 +640,13 @@ data class GeometricTransformAttributeElement(
     val version: Int,
     val storedValuesMask: Int,
     val matrix: Mx4F64,
+    /**
+     * Which width the stored values were read at — resolved from the body's remaining length
+     * (`popcount(mask) × 4` vs `× 8`), not from the generation, and emitted back unchanged.
+     * With `storedValuesMask == 0` the two readings coincide and this is the generation's
+     * documented width.
+     */
+    val valueWidth: TransformValueWidth = TransformValueWidth.F64,
 ) : AttributeElement() {
     override val objectTypeId: Guid get() = ObjectTypeIds.GEOMETRIC_TRANSFORM_ATTRIBUTE
 }
@@ -605,7 +730,18 @@ data class TextureCoordGenerationParameters(
     }
 }
 
-/** Image Format Description (Figure 53). */
+/**
+ * The wire width of Image Format Description's Shared Image Flag: `U8` in 9.5 Figure 48 (p.72,
+ * figure box and p.73 prose alike), `U32` in v10 Figure 53. Three bytes, immediately before
+ * `I16 : Mipmaps Count` — a misread here does not shorten the block, it corrupts the mipmap
+ * loop that follows.
+ */
+enum class SharedImageFlagWidth(val bytes: Int) {
+    U8(1),
+    U32(4),
+}
+
+/** Image Format Description (v10 Figure 53 / 9.5 Figure 48). */
 data class ImageFormatDescription(
     val pixelFormat: UInt,
     val pixelDataType: UInt,
@@ -617,6 +753,12 @@ data class ImageFormatDescription(
     val numberBorderTexels: Int,
     val sharedImageFlag: UInt,
     val mipmapsCount: Int,
+    /**
+     * Which width [sharedImageFlag] was read at — resolved by parsing the element's image list
+     * under each candidate and keeping the one that consumes the body exactly, and emitted back
+     * unchanged.
+     */
+    val sharedImageFlagWidth: SharedImageFlagWidth = SharedImageFlagWidth.U32,
 )
 
 /** Inline Texture Image Data (Figure 52): format plus the per-mipmap texel byte blocks. */

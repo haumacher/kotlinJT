@@ -209,7 +209,18 @@ What that pass did to the deltas recorded below:
   describe the bitlength wire format, statement for statement) · delta 36 (Figure 126's guard
   encloses the `VecF32` too) · delta 37 (confirmed v10-only — the code was already right) ·
   delta 9, corrected and closed by package P2 below (9.5 Fig. 30's guard is `>= 1`, not
-  `>= 2`, and the identity of the second `U64` is the figure's own repeat of the first).
+  `>= 2`, and the identity of the second `U64` is the figure's own repeat of the first) ·
+  **delta 11's *rationale*, corrected by package P6** (the `0x000F` refusal is right, but there
+  is no "Common RGB Value" compact colour encoding to fear: 9.5 p.62 documents the same four
+  bit groups as v10 and declares the rest reserved).
+- **Corrected by package P6 — the model-correctness sweep** (byte-neutral defects: the library
+  decoded the right *number* of bytes into the wrong model, so no fixture ever complained):
+  the Partition Node's middle bounding box was the *Reserved Field*, not the Transformed BBox,
+  in both 9.5 fixtures (delta 43) · Geometric Transform element values are `F32` in 9.5 and the
+  Shared Image Flag is `U8` (delta 44) · the light family's Shadow Parameters sit on the
+  *element*, gated on local version 2, not inside Base Light Data (delta 45) · State Flags bit
+  `0x01` and the field-inhibit bit assignments differ in meaning between the generations
+  (delta 46).
 - **Refuted as a claim, though the behaviour stands:** the statement in `LwpaDocument.kt`, this
   file and `SPEC_COVERAGE.md` that the 9.5 reference does not document a JT LWPA Element. It
   does — §7.2.9.1, Fig. 215, segment type 24, with the GUID `ObjectTypeIds.kt` already carries.
@@ -310,16 +321,27 @@ deferral — see the table).
 sub-collections plus the version-width rule decode typed in v9: the whole node family
 (including all shape nodes — their tails after verified collections are fixed-size, so the
 strict length check turns any wrong derivation into a named opaque fallback, not a misread),
-the property atom family, the property table, and the Material attribute. All *other*
-attribute types (draw style, lights, line/point style, geometric transform, textures,
-mappings) are **opaque-by-policy in v9** with `ELEMENT_LAYOUT_UNVERIFIED` — the LOD/shape/
-material deltas below prove that v9 layouts do *not* follow mechanically from v10, so
-guessing variable-length layouts would risk silent misreads. Their time comes with the first
-v9 fixture that carries them.
+the property atom family, the property table, and the Material attribute. Package P6 added the
+three types whose 9.5 layout the Rev-D figures settle completely and whose bodies are
+fixed-size after the verified collections: **Infinite Light, Point Light and Geometric
+Transform** (deltas 43–45 below). All *other* attribute types (draw style, light set,
+line/point style, textures, mappings) remain **opaque-by-policy in v9** with
+`ELEMENT_LAYOUT_UNVERIFIED` — the LOD/shape/material deltas below prove that v9 layouts do
+*not* follow mechanically from v10, so guessing variable-length layouts would risk silent
+misreads. Their time comes with the first v9 fixture that carries them.
 
-**Known spec ambiguities recorded**: Figure 57 (Base Light Data) shows a stray element-header
-box; read as Base Attribute Data first, per the attribute-element convention — spec-derived,
-not fixture-verified. The Vector4f Property Atom's GUID appears in §6.2 but is missing from
+**Known spec ambiguities recorded**: **where Base Attribute Data sits inside Base Light Data is
+`spec unclear` in both generations, and no fixture can settle it.** v10 Figure 57 draws a stray
+"Logical Element Header Compressed" box in that slot — *after* the `I8 Version Number` — while
+9.5 Figure 54 (p.84, rendered) omits the collection altogether, though both light sections' prose
+presupposes it ("does not have any Field Inhibit flag … bit assignments"). Both drawings are
+corrupt in the same place; the two candidate placements have identical width, so the length
+oracle cannot discriminate them, and neither 9.5 fixture nor the NIST file carries a light. The
+library reads Base Attribute Data **first**, per the attribute-element convention every other
+element follows: presence is not in doubt, only position, and the choice is recorded in
+`BaseLightData`'s KDoc rather than hidden in the codec. Resolvable only by a real file (a 9.5
+version-1 Infinite Light is 89 body bytes with the collection and 82 without) or a second
+independent reader. The Vector4f Property Atom's GUID appears in §6.2 but is missing from
 Table A.1; `ObjectTypeIds` carries it with a comment. Float payloads are re-encoded from
 `Float`/`Double` fields; exotic NaN bit patterns are not guaranteed bit-stable on Kotlin/JS
 (`Float.fromBits` normalization) — no real file has shown one; if one does, the affected
@@ -363,8 +385,15 @@ table) and pinned by the v9 halves of the per-figure codec tests.
 11. **Material Attribute: v9 has no bumpiness; reflectivity exists from local version 2 on.**
     Evidence: both material elements are version 2 with exactly 18 F32 payload values =
     4 RGBA + shininess + reflectivity (v10 Figure 47 has 19 with bumpiness). Data-flag bits
-    0x000F (the v10 inhibit table hints at "Common RGB Value" compact colour storage in older
-    generations) refuse the v9 typed decode — layout not established, never guessed.
+    0x000F ~~(the v10 inhibit table hints at "Common RGB Value" compact colour storage in older
+    generations)~~ refuse the v9 typed decode — layout not established, never guessed.
+    **Rationale corrected (package P6, from 9.5 §7.2.1.1.2.2, p.62):** there is no compact
+    colour encoding to hint at. 9.5 documents exactly the four bit groups v10 Table 18 does
+    (`0x0010` Blending, `0x0020` Override Vertex Colours, `0x07C0` Source Blend Factor,
+    `0xF800` Destination Blend Factor) and declares every other bit reserved, and 9.5's
+    Figure 42 has no such field either. The "Common RGB Value" names are a shared editorial
+    artifact of *both* generations' field-inhibit tables. The refusal stands — a set reserved
+    bit means the layout of what follows is unestablished — only its stated reason was wrong.
 12. **The Property Table layout is shared by both generations** (I16 version even in v10,
     Figure 78). Evidence: the fixture's 694-byte tail parses to exactly 40 element property
     tables with zero leftover; all key/value object ids resolve to decoded property atoms.
@@ -379,6 +408,69 @@ table) and pinned by the v9 halves of the per-figure codec tests.
     error; the JT 9 path simply recorded `(texCoord << 32) | colour` (or its reverse) as one
     opaque number. No fixture in the corpus carries a Primitive Set Shape Node, so this is
     spec-derived and unexercised by real bytes — the strict length check still protects it.
+43. **Partition Node: the single `BBoxF32` between File Name and Area is the *Reserved Field*
+    in v9 when Partition Flags bit 0 is set, and the Transformed BBox only when it is clear.**
+    (Package P6.) **9.5 §7.2.1.1.1.2, Figure 14, p.36**, read from the rendered page — the
+    layout dump destroys the branch geometry and is actively misleading here: the main path
+    runs File Name → `BBoxF32 : Reserved Field`, and a side branch guarded
+    `(Partition Flags & 0x00000001) == 0` reaches `BBoxF32 : Transformed BBox`, the two
+    rejoining above `F32 : Area`. v10 Figure 23 has no reserved field and writes the
+    Transformed BBox unconditionally. Exactly one box either way, so **the byte count matches
+    v10 in both branches and nothing ever failed** — only the field's identity changes. Both
+    9.5 fixtures corroborate the figure: Partition Flags = `0x1`, the middle box is the
+    empty-box sentinel (`min = +FLT_MAX`, `max = −FLT_MAX`) that no producer would write as an
+    extent, and the trailing Untransformed BBox holds the real geometry (KR360-1:
+    `(−2826, −2825.8, −0.1) … (2826, 2825.8, 2869.2)`). The model discriminates the two
+    (`PartitionNodeElement.reservedBBox` / `.transformedBBox`, exactly one non-null) and offers
+    `extentBBox` for consumers that want the declared extent; the world-box probes now read
+    that, where before they were computing a bounding-box diagonal of `Infinity` from the
+    sentinel and passing every containment check trivially. The prose is silent on the
+    conditionality (only the Untransformed BBox paragraph mentions bit 0), so `spec unclear` on
+    the prose; the figure is unambiguous.
+44. **Two 9.5 attribute field widths v10 changed: Geometric Transform's `Element Value` is
+    `F32` (v10 `F64`), and Image Format Description's `Shared Image Flag` is `U8` (v10 `U32`).**
+    (Package P6.) Citations: **9.5 §7.2.1.1.2.11, Figure 61, p.91** — figure box *and* prose
+    heading both `F32 : Element Value`, against v10 Figure 63's `F64`; and **9.5
+    §7.2.1.1.2.3.5, Figure 48, p.72** with its p.73 prose — `U8 : Shared Image Flag`, against
+    v10 Figure 53's `U32`. Both are *self-disambiguating from the body* and are resolved that
+    way rather than from the generation (lenient read): the transform's stored values are the
+    element's last field group, so `popcount(mask) × 4` against `× 8` decides; the image list
+    is the texture element's last field group, so parsing it under each candidate width and
+    keeping the one that consumes the body exactly decides. What was read is a model fact
+    (`GeometricTransformAttributeElement.valueWidth`,
+    `ImageFormatDescription.sharedImageFlagWidth`), so re-serialization stays a projection.
+    The Shared Image Flag matters out of proportion to its three bytes: it sits immediately
+    before `I16 : Mipmaps Count`, so a misread does not shorten the block — it walks the mipmap
+    loop out of step.
+45. **The light family: `Shadow Parameters` moved between the generations, and 9.5 gates the
+    pair on the element's local version 2.** (Package P6.) v10 Figure 57 keeps
+    `F32 Non-shadow Alpha Factor` + `F32 Shadow Alpha Factor` inside Base Light Data,
+    unconditionally. **9.5 Figure 54, p.84** ends Base Light Data at `F32 : Shadow Opacity`,
+    and **Figures 53 (p.83) and 56 (p.86)** hang the pair off the *element*, after its own
+    payload, on a branch guarded `Version Number == 2` — i.e. present from local version 2
+    upwards (see *Local version guards mean `>= N`*). Both figures mislabel that branch box
+    "Shadow Opacity"; their own captions point at §7.2.1.1.2.6.2 *Shadow Parameters*, and
+    Shadow Opacity already exists unconditionally inside Base Light Data. `readBaseLightData`
+    previously read all three trailing `F32`s in *every* generation — the v10 layout applied to
+    v9, wrong by 8 bytes for a version-1 light and wrong by placement for a version-2 one (the
+    direction / spot intensity would have absorbed the factors). Presence is resolved from the
+    body's remaining length and recorded (`InfiniteLightAttributeElement.shadowParameters`,
+    `PointLightAttributeElement.shadowParameters`, `BaseLightData.shadowParameters` for the v10
+    placement), so a version-1 light cannot round-trip as a version-2 one.
+46. **State Flags bit `0x01` and the per-element field-inhibit bit assignments mean different
+    things in the two generations — same bytes, different tables.** (Package P6, semantics not
+    layout.) 9.5 §7.2.1.1.2.1.1 (p.55) assigns bit `0x01` the attribute-wide **Accumulation
+    Final** flag; v10 Table 15 declares it **Unused**, having replaced it with the per-field
+    Field Final Flags word that JT 9 does not have. Bits `0x02` Force, `0x04` Ignore, `0x08`
+    Persistable are identical. The model reads the bit through
+    `BaseAttributeData.accumulationFinal`, which is false whenever the Field Final Flags word
+    is present — the generation is legible from the model itself — and the scene façade now
+    names the JT 9 flag it cannot honour instead of ignoring it. Separately, 9.5 p.60 gives the
+    Material element a **"Diffuse Color and Alpha (Legacy)"** row at inhibit bit 1 that v10
+    Table 16 lacks, so v10's assignments for bits 1–8 are 9.5's shifted down by one; the same
+    shape of shift affects Texture Image (9.5 puts Internal Compression Level on bit 8 with
+    bit 7 unused, v10 on bit 7). The inhibit word is therefore carried verbatim and never
+    interpreted; any future interpretation must branch on the generation.
 
 ## Layer 1: Shape LOD bodies (issue #4)
 
